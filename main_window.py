@@ -20,6 +20,7 @@ from mediapipe_logic import (
     mp_holistic, DATA_PATH, OUTPUT_PATH, RECORD_SECONDS
 )
 from recognition_logic import RecognitionWorker # <-- NEW
+from video_recorder import VideoRecorder # <-- NEW: Professional video recorder
 
 # --- APPLICATION STATES ---
 STATE_HOME = 0
@@ -113,6 +114,12 @@ class CollectionApp(QMainWindow):
         self.processing_thread = None
         self.training_thread = None # <-- NEW
         self.recognition_worker = None # <-- NEW
+        
+        # --- Professional Video Recorder ---
+        self.video_recorder = VideoRecorder()
+        self.video_recorder.recording_started.connect(self.on_recording_started)
+        self.video_recorder.recording_stopped.connect(self.on_recording_stopped)
+        self.video_recorder.error_occurred.connect(self.on_recorder_error)
 
         # --- Init ---
         self.initUI()
@@ -363,6 +370,9 @@ class CollectionApp(QMainWindow):
         if not self.cap.isOpened():
             QMessageBox.critical(self, "Camera Error", f"Could not open webcam {cam_index}.")
             return
+        
+        # Initialize the video recorder with the camera
+        self.video_recorder.initialize_recorder(self.cap)
             
         self.camera_timer.start(33)
         self.stacked_widget.setCurrentWidget(self.collection_widget)
@@ -370,6 +380,11 @@ class CollectionApp(QMainWindow):
 
     def stop_session(self):
         self.camera_timer.stop()
+        
+        # Stop video recorder if recording
+        if self.video_recorder.is_recording():
+            self.video_recorder.stop_recording()
+        
         if self.cap: self.cap.release(); self.cap = None
         if self.video_writer: self.video_writer.release(); self.video_writer = None
         if self.processing_thread: self.processing_thread.quit(); self.processing_thread.wait()
@@ -428,7 +443,7 @@ class CollectionApp(QMainWindow):
             self.recording_label.setVisible(True)
             self.status_text_label.setText(f"Recording video {self.current_video_num}...")
             self.record_start_time = time.time()
-            self.init_video_writer()
+            self.start_professional_recording()
 
         elif new_state == STATE_PROCESSING:
             self.center_text_label.setText("Processing...")
@@ -464,6 +479,49 @@ class CollectionApp(QMainWindow):
     def start_batch_countdown(self):
         if self.app_state == STATE_WAITING_FOR_BATCH:
             self.set_state(STATE_BATCH_COUNTDOWN)
+    
+    # --- Professional Video Recording Methods ---
+    
+    def start_professional_recording(self):
+        """Start recording using the VideoRecorder system"""
+        if not self.cap:
+            print("[MainWindow] ERROR: Camera not initialized")
+            return
+        
+        # Prepare file path
+        video_name = str(self.current_video_num)
+        self.video_save_path = os.path.join(self.action_video_dir, f"{video_name}.mp4")
+        self.landmark_save_folder = os.path.join(self.action_landmark_dir, video_name)
+        os.makedirs(self.landmark_save_folder, exist_ok=True)
+        
+        # Initialize and start recorder
+        if not self.video_recorder.is_ready():
+            self.video_recorder.initialize_recorder(self.cap)
+        
+        # Start recording with duration limit
+        success = self.video_recorder.start_recording(
+            self.video_save_path, 
+            duration_seconds=self.current_record_seconds
+        )
+        
+        if not success:
+            print(f"[MainWindow] Failed to start recording")
+            QMessageBox.warning(self, "Recording Error", "Could not start video recording")
+            self.set_state(STATE_WAITING_FOR_BATCH)
+    
+    def on_recording_started(self):
+        """Callback when recording starts"""
+        print(f"[MainWindow] Recording started callback")
+    
+    def on_recording_stopped(self, file_path):
+        """Callback when recording stops"""
+        print(f"[MainWindow] Recording stopped: {file_path}")
+        # Note: Don't change state here, it's managed by update_frame
+    
+    def on_recorder_error(self, error_msg):
+        """Callback for recorder errors"""
+        print(f"[MainWindow] Recorder error: {error_msg}")
+        QMessageBox.warning(self, "Recording Error", error_msg)
             
     def init_video_writer(self):
         if not self.cap: return
@@ -475,13 +533,14 @@ class CollectionApp(QMainWindow):
         width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         
-        # Get actual camera FPS or use 30 FPS (matching camera_timer interval of 33ms)
-        camera_fps = self.cap.get(cv2.CAP_PROP_FPS)
-        fps = camera_fps if camera_fps > 0 else 30.0  # Default to 30 FPS
+        # Calculate FPS based on timer interval (33ms = ~30.3 FPS)
+        # Writing every frame with this FPS ensures video duration matches recording time
+        timer_interval_ms = 33  # milliseconds
+        fps = 1000.0 / timer_interval_ms  # ~30.3 FPS
         
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         self.video_writer = cv2.VideoWriter(self.video_save_path, fourcc, fps, (width, height))
-        print(f"VideoWriter initialized for {self.video_save_path} at {fps} FPS")
+        print(f"VideoWriter initialized for {self.video_save_path} at {fps:.1f} FPS")
 
     # --- Main Camera Loop ---
     
@@ -498,13 +557,14 @@ class CollectionApp(QMainWindow):
             elapsed = time.time() - self.record_start_time
             cv2.putText(image, f"0:0{int(elapsed)+1}", (150, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2, cv2.LINE_AA)
             
-            if elapsed < self.current_record_seconds:
-                if self.video_writer: self.video_writer.write(frame)
-            else:
-                if self.video_writer:
-                    self.video_writer.release()
-                    self.video_writer = None
-                    print(f"Video saved: {self.video_save_path}")
+            # Check if recording duration completed
+            if elapsed >= self.current_record_seconds:
+                # Stop the professional recorder
+                if self.video_recorder.is_recording():
+                    saved_path = self.video_recorder.stop_recording()
+                    print(f"[MainWindow] Video recording completed: {saved_path}")
+                
+                # Transition to processing
                 self.set_state(STATE_PROCESSING)
                 
         qt_image = self.convert_cv_to_pixmap(image)
