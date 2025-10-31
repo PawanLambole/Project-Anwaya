@@ -12,7 +12,8 @@ from PyQt5.QtCore import QTimer, Qt, QThread, pyqtSignal # <-- NEW: QThread, pyq
 from ui_definitions import (
     create_sidebar, create_home_widget, 
     create_setup_widget, create_collection_widget,
-    create_training_widget, create_recognition_widget # <-- NEW
+    create_training_widget, create_recognition_widget, # <-- NEW
+    create_manage_data_widget # <-- NEW
 )
 from mediapipe_logic import (
     mediapipe_detection, draw_styled_landmarks, ProcessingThread,
@@ -31,6 +32,7 @@ STATE_PROCESSING = 6
 STATE_SESSION_DONE = 7
 STATE_TRAINING = 8 # <-- NEW
 STATE_RECOGNITION = 9 # <-- NEW
+STATE_MANAGE_DATA = 10 # <-- NEW
 
 # --- NEW: Training Thread ---
 class TrainingThread(QThread):
@@ -140,12 +142,14 @@ class CollectionApp(QMainWindow):
         self.collection_widget = create_collection_widget(self)
         self.training_widget = create_training_widget(self) # <-- NEW
         self.recognition_widget = create_recognition_widget(self) # <-- NEW
+        self.manage_data_widget = create_manage_data_widget(self) # <-- NEW
         
         self.stacked_widget.addWidget(self.home_widget)
         self.stacked_widget.addWidget(self.setup_widget)
         self.stacked_widget.addWidget(self.collection_widget)
         self.stacked_widget.addWidget(self.training_widget) # <-- NEW
         self.stacked_widget.addWidget(self.recognition_widget) # <-- NEW
+        self.stacked_widget.addWidget(self.manage_data_widget) # <-- NEW
 
         # Connect signals
         self.rec_time_spin.valueChanged.connect(self.update_record_time)
@@ -154,6 +158,15 @@ class CollectionApp(QMainWindow):
         self.recognition_back_btn.clicked.connect(self.go_to_home)
         self.recognition_start_btn.clicked.connect(self.start_recognition)
         self.recognition_stop_btn.clicked.connect(self.stop_recognition)
+        
+        # Connect manage data signals
+        self.manage_data_back_btn.clicked.connect(self.go_to_home)
+        self.manage_actions_list.itemClicked.connect(self.on_manage_action_selected)
+        self.view_videos_btn.clicked.connect(self.view_action_videos)
+        self.delete_action_btn.clicked.connect(self.delete_action_data)
+        self.export_data_btn.clicked.connect(self.export_data_info)
+        self.refresh_actions_btn.clicked.connect(self.refresh_actions_data)
+        self.restart_app_btn.clicked.connect(self.restart_application)
 
         self.stacked_widget.setCurrentWidget(self.home_widget)
 
@@ -197,6 +210,12 @@ class CollectionApp(QMainWindow):
         """Navigate to recognition page"""
         self.stacked_widget.setCurrentWidget(self.recognition_widget)
         self.set_state(STATE_RECOGNITION)
+    
+    def go_to_manage_data(self):
+        """Navigate to data management page"""
+        self.stacked_widget.setCurrentWidget(self.manage_data_widget)
+        self.set_state(STATE_MANAGE_DATA)
+        self.load_data_statistics()
 
     def go_to_home(self):
         # Stop any running threads before going home
@@ -455,10 +474,14 @@ class CollectionApp(QMainWindow):
         
         width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        fps = 20.0
+        
+        # Get actual camera FPS or use 30 FPS (matching camera_timer interval of 33ms)
+        camera_fps = self.cap.get(cv2.CAP_PROP_FPS)
+        fps = camera_fps if camera_fps > 0 else 30.0  # Default to 30 FPS
+        
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         self.video_writer = cv2.VideoWriter(self.video_save_path, fourcc, fps, (width, height))
-        print(f"VideoWriter initialized for {self.video_save_path}")
+        print(f"VideoWriter initialized for {self.video_save_path} at {fps} FPS")
 
     # --- Main Camera Loop ---
     
@@ -529,6 +552,242 @@ class CollectionApp(QMainWindow):
         if key == Qt.Key_S:
             if self.app_state == STATE_WAITING_FOR_BATCH:
                 self.start_batch_countdown()
+
+    # --- Data Management Methods ---
+    
+    def load_data_statistics(self):
+        """Load and display data statistics"""
+        try:
+            if not os.path.exists(DATA_PATH):
+                self.data_stats_label.setText("No data collected yet.")
+                self.manage_actions_list.clear()
+                return
+            
+            actions = [d for d in os.listdir(DATA_PATH) 
+                      if os.path.isdir(os.path.join(DATA_PATH, d))]
+            
+            total_videos = 0
+            total_processed = 0
+            action_data = []
+            
+            for action in actions:
+                action_video_dir = os.path.join(DATA_PATH, action)
+                action_processed_dir = os.path.join(OUTPUT_PATH, action)
+                
+                video_count = len([f for f in os.listdir(action_video_dir) 
+                                  if f.endswith(('.mp4', '.avi', '.mov', '.webm'))])
+                
+                processed_count = 0
+                if os.path.exists(action_processed_dir):
+                    processed_count = len([d for d in os.listdir(action_processed_dir) 
+                                          if os.path.isdir(os.path.join(action_processed_dir, d))])
+                
+                total_videos += video_count
+                total_processed += processed_count
+                action_data.append((action, video_count, processed_count))
+            
+            # Update statistics
+            stats_text = f"""
+📊 Dataset Statistics:
+━━━━━━━━━━━━━━━━━━━━
+Total Actions: {len(actions)}
+Total Videos: {total_videos}
+Total Processed: {total_processed}
+━━━━━━━━━━━━━━━━━━━━
+            """.strip()
+            self.data_stats_label.setText(stats_text)
+            
+            # Update actions list
+            self.manage_actions_list.clear()
+            for action, vid_count, proc_count in sorted(action_data):
+                item_text = f"{action}  |  📹 {vid_count} videos  |  ✓ {proc_count} processed"
+                self.manage_actions_list.addItem(item_text)
+                
+        except Exception as e:
+            self.data_stats_label.setText(f"Error loading statistics: {str(e)}")
+    
+    def on_manage_action_selected(self, item):
+        """Handle action selection in manage data page"""
+        action_name = item.text().split('  |  ')[0]
+        
+        action_video_dir = os.path.join(DATA_PATH, action_name)
+        action_processed_dir = os.path.join(OUTPUT_PATH, action_name)
+        
+        video_files = [f for f in os.listdir(action_video_dir) 
+                      if f.endswith(('.mp4', '.avi', '.mov', '.webm'))]
+        
+        processed_folders = []
+        if os.path.exists(action_processed_dir):
+            processed_folders = [d for d in os.listdir(action_processed_dir) 
+                                if os.path.isdir(os.path.join(action_processed_dir, d))]
+        
+        details_text = f"""
+Action: {action_name}
+━━━━━━━━━━━━━━━━━━━━
+Videos: {len(video_files)}
+Processed: {len(processed_folders)}
+Location: {action_video_dir}
+        """.strip()
+        
+        self.action_details_label.setText(details_text)
+        self.view_videos_btn.setEnabled(True)
+        self.delete_action_btn.setEnabled(True)
+        self.selected_action = action_name
+    
+    def view_action_videos(self):
+        """Open file explorer to view action videos"""
+        if hasattr(self, 'selected_action'):
+            action_video_dir = os.path.join(DATA_PATH, self.selected_action)
+            if os.path.exists(action_video_dir):
+                os.startfile(action_video_dir)
+    
+    def delete_action_data(self):
+        """Delete all data for selected action"""
+        if not hasattr(self, 'selected_action'):
+            return
+        
+        reply = QMessageBox.question(
+            self, 'Confirm Deletion',
+            f'Are you sure you want to delete all data for action "{self.selected_action}"?\n\n'
+            'This will delete:\n'
+            '- All video files\n'
+            '- All processed landmarks\n\n'
+            'This action cannot be undone!',
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            try:
+                import shutil
+                
+                # Delete video folder
+                action_video_dir = os.path.join(DATA_PATH, self.selected_action)
+                if os.path.exists(action_video_dir):
+                    shutil.rmtree(action_video_dir)
+                
+                # Delete processed folder
+                action_processed_dir = os.path.join(OUTPUT_PATH, self.selected_action)
+                if os.path.exists(action_processed_dir):
+                    shutil.rmtree(action_processed_dir)
+                
+                QMessageBox.information(self, "Success", 
+                                      f'All data for "{self.selected_action}" has been deleted.')
+                
+                # Reload statistics
+                self.load_data_statistics()
+                self.action_details_label.setText("Select an action to view details")
+                self.view_videos_btn.setEnabled(False)
+                self.delete_action_btn.setEnabled(False)
+                
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to delete data: {str(e)}")
+    
+    def export_data_info(self):
+        """Export dataset information to text file"""
+        try:
+            if not os.path.exists(DATA_PATH):
+                QMessageBox.warning(self, "No Data", "No data to export.")
+                return
+            
+            import datetime
+            
+            actions = [d for d in os.listdir(DATA_PATH) 
+                      if os.path.isdir(os.path.join(DATA_PATH, d))]
+            
+            export_text = f"""
+ISL Dataset Information
+Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+{'='*50}
+
+Total Actions: {len(actions)}
+
+{'='*50}
+ACTION DETAILS:
+{'='*50}
+
+"""
+            
+            for action in sorted(actions):
+                action_video_dir = os.path.join(DATA_PATH, action)
+                action_processed_dir = os.path.join(OUTPUT_PATH, action)
+                
+                video_files = [f for f in os.listdir(action_video_dir) 
+                              if f.endswith(('.mp4', '.avi', '.mov', '.webm'))]
+                
+                processed_count = 0
+                if os.path.exists(action_processed_dir):
+                    processed_count = len([d for d in os.listdir(action_processed_dir) 
+                                          if os.path.isdir(os.path.join(action_processed_dir, d))])
+                
+                export_text += f"""
+Action: {action}
+  - Videos: {len(video_files)}
+  - Processed: {processed_count}
+  - Path: {action_video_dir}
+
+"""
+            
+            export_path = "dataset_info.txt"
+            with open(export_path, 'w', encoding='utf-8') as f:
+                f.write(export_text)
+            
+            QMessageBox.information(self, "Export Complete", 
+                                  f'Dataset information exported to:\n{os.path.abspath(export_path)}')
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Export Error", f"Failed to export data: {str(e)}")
+    
+    def refresh_actions_data(self):
+        """Refresh the actions list and statistics"""
+        self.load_data_statistics()
+        self.action_details_label.setText("Select an action to view details")
+        self.view_videos_btn.setEnabled(False)
+        self.delete_action_btn.setEnabled(False)
+        
+        # Also refresh the sidebar action list
+        self.load_existing_actions()
+        
+        QMessageBox.information(self, "Refreshed", "Data has been refreshed successfully!")
+    
+    def restart_application(self):
+        """Restart the entire application"""
+        reply = QMessageBox.question(
+            self, 'Restart Application',
+            'Are you sure you want to restart the application?\n\n'
+            'All unsaved progress will be lost.',
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # Stop all running processes
+            self.stop_session()
+            if self.training_thread and self.training_thread.isRunning():
+                self.training_thread.stop()
+            if self.recognition_worker and self.recognition_worker.isRunning():
+                self.recognition_worker.stop()
+            if self.holistic:
+                self.holistic.close()
+            
+            # Restart the application
+            import sys
+            import subprocess
+            
+            # Get the python executable and script path
+            python = sys.executable
+            script = os.path.abspath(sys.argv[0])
+            
+            # Close current application
+            self.close()
+            
+            # Start new instance
+            subprocess.Popen([python, script])
+            
+            # Exit current process
+            sys.exit()
+    
+    # --- END Data Management Methods ---
 
     def closeEvent(self, event):
         # Clean up all threads

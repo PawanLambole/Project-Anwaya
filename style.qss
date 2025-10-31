@@ -165,6 +165,127 @@ QWidget {
     font-size: 14px;
 }
 
+/* --- Manage Data Page Styles --- */
+#ManageDataPage {
+    background-color: #1E1E1E;
+}
+
+#ManageDataHeaderTitle {
+    font-size: 28px;
+    font-weight: bold;
+    color: #0078D4;
+}
+
+#statsContainer {
+    background-color: #2D2D2D;
+    border: 1px solid #444;
+    border-radius: 8px;
+    padding: 15px;
+    margin: 10px 0;
+}
+
+#dataStatsLabel {
+    color: #FFFFFF;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+#SectionLabel {
+    font-size: 16px;
+    font-weight: bold;
+    color: #0078D4;
+    margin-top: 10px;
+}
+
+#manageActionsList {
+    background-color: #2D2D2D;
+    border: 1px solid #555;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+#manageActionsList::item {
+    padding: 10px;
+    border-bottom: 1px solid #444;
+}
+
+#manageActionsList::item:hover {
+    background-color: #3D3D3D;
+}
+
+#manageActionsList::item:selected {
+    background-color: #0078D4;
+}
+
+#detailsContainer {
+    background-color: #2D2D2D;
+    border: 1px solid #444;
+    border-radius: 8px;
+    padding: 15px;
+    min-height: 80px;
+}
+
+#actionDetailsLabel {
+    color: #AFAFAF;
+    font-size: 13px;
+}
+
+#viewVideosButton {
+    background-color: #0078D4;
+}
+
+#viewVideosButton:hover {
+    background-color: #005A9E;
+}
+
+#deleteActionButton {
+    background-color: #D93025;
+}
+
+#deleteActionButton:hover {
+    background-color: #A52A2A;
+}
+
+#exportDataButton {
+    background-color: #34A853;
+}
+
+#exportDataButton:hover {
+    background-color: #2E8B57;
+}
+
+#manageDataButton {
+    background-color: #6A1B9A;
+}
+
+#manageDataButton:hover {
+    background-color: #4A148C;
+}
+
+#refreshActionsButton {
+    background-color: #0078D4;
+    padding: 8px 15px;
+    font-size: 13px;
+}
+
+#refreshActionsButton:hover {
+    background-color: #005A9E;
+}
+
+#restartAppButton {
+    background-color: #FF6B6B;
+    color: white;
+    font-weight: bold;
+}
+
+#restartAppButton:hover {
+    background-color: #EE5555;
+}
+
+#restartAppButton:pressed {
+    background-color: #DD4444;
+}
+
 
 /* Sidebar */
 #Sidebar {

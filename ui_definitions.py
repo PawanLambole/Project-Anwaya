@@ -114,9 +114,9 @@ def create_home_widget(main_window):
     main_window.recognize_btn.clicked.connect(main_window.go_to_recognition)
     button_layout.addWidget(main_window.recognize_btn)
 
-    main_window.manage_data_button = QPushButton("Manage Data (Coming Soon)")
-    main_window.manage_data_button.setObjectName("ButtonDisabled")
-    main_window.manage_data_button.setDisabled(True)
+    main_window.manage_data_button = QPushButton("📂 Manage Data")
+    main_window.manage_data_button.setObjectName("manageDataButton")
+    main_window.manage_data_button.clicked.connect(main_window.go_to_manage_data)
     button_layout.addWidget(main_window.manage_data_button)
 
     main_window.quit_home_button = QPushButton("Quit Application")
@@ -275,6 +275,102 @@ def create_recognition_widget(main_window):
     status_layout.addStretch()
     
     layout.addLayout(status_layout)
+    
+    return widget
+
+def create_manage_data_widget(main_window):
+    """
+    Creates the Data Management Page UI
+    """
+    widget = QWidget()
+    widget.setObjectName("ManageDataPage")
+    layout = QVBoxLayout(widget)
+    layout.setContentsMargins(20, 20, 20, 20)
+    layout.setSpacing(15)
+
+    # Header with back button
+    header_layout = QHBoxLayout()
+    main_window.manage_data_back_btn = QPushButton("← Back to Home")
+    main_window.manage_data_back_btn.setObjectName("ButtonGray")
+    header_layout.addWidget(main_window.manage_data_back_btn)
+    
+    header_title = QLabel("Data Management")
+    header_title.setObjectName("ManageDataHeaderTitle")
+    header_title.setAlignment(Qt.AlignCenter)
+    header_layout.addWidget(header_title, 1)
+    
+    header_layout.addWidget(QLabel())
+    header_layout.itemAt(2).widget().setFixedWidth(main_window.manage_data_back_btn.sizeHint().width())
+    
+    layout.addLayout(header_layout)
+
+    # Data statistics container
+    stats_container = QWidget()
+    stats_container.setObjectName("statsContainer")
+    stats_layout = QVBoxLayout(stats_container)
+    
+    main_window.data_stats_label = QLabel("Loading statistics...")
+    main_window.data_stats_label.setObjectName("dataStatsLabel")
+    stats_layout.addWidget(main_window.data_stats_label)
+    
+    layout.addWidget(stats_container)
+
+    # Action list with details
+    actions_header_layout = QHBoxLayout()
+    actions_label = QLabel("Actions in Dataset:")
+    actions_label.setObjectName("SectionLabel")
+    actions_header_layout.addWidget(actions_label)
+    
+    actions_header_layout.addStretch()
+    
+    main_window.refresh_actions_btn = QPushButton("🔄 Refresh")
+    main_window.refresh_actions_btn.setObjectName("refreshActionsButton")
+    main_window.refresh_actions_btn.setMaximumWidth(120)
+    actions_header_layout.addWidget(main_window.refresh_actions_btn)
+    
+    layout.addLayout(actions_header_layout)
+    
+    main_window.manage_actions_list = QListWidget()
+    main_window.manage_actions_list.setObjectName("manageActionsList")
+    layout.addWidget(main_window.manage_actions_list, 1)
+
+    # Action details panel
+    details_container = QWidget()
+    details_container.setObjectName("detailsContainer")
+    details_layout = QVBoxLayout(details_container)
+    
+    main_window.action_details_label = QLabel("Select an action to view details")
+    main_window.action_details_label.setObjectName("actionDetailsLabel")
+    main_window.action_details_label.setWordWrap(True)
+    details_layout.addWidget(main_window.action_details_label)
+    
+    layout.addWidget(details_container)
+
+    # Action buttons
+    button_layout = QHBoxLayout()
+    
+    main_window.view_videos_btn = QPushButton("📹 View Videos")
+    main_window.view_videos_btn.setObjectName("viewVideosButton")
+    main_window.view_videos_btn.setEnabled(False)
+    button_layout.addWidget(main_window.view_videos_btn)
+    
+    main_window.delete_action_btn = QPushButton("🗑️ Delete Action")
+    main_window.delete_action_btn.setObjectName("deleteActionButton")
+    main_window.delete_action_btn.setEnabled(False)
+    button_layout.addWidget(main_window.delete_action_btn)
+    
+    main_window.export_data_btn = QPushButton("💾 Export Data Info")
+    main_window.export_data_btn.setObjectName("exportDataButton")
+    button_layout.addWidget(main_window.export_data_btn)
+    
+    button_layout.addStretch()
+    
+    main_window.restart_app_btn = QPushButton("🔄 Restart Application")
+    main_window.restart_app_btn.setObjectName("restartAppButton")
+    main_window.restart_app_btn.setMinimumWidth(180)
+    button_layout.addWidget(main_window.restart_app_btn)
+    
+    layout.addLayout(button_layout)
     
     return widget
 
