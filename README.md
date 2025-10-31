@@ -30,15 +30,14 @@ A PyQt5-based desktop application for collecting ISL gesture data, training LSTM
 ## 📋 Requirements
 
 ```
-opencv-python
-mediapipe
-numpy
-tensorflow
-keras
-scikit-learn
-PyQt5
-matplotlib
-Pillow
+opencv-python==4.10.0.84
+numpy==1.26.4
+mediapipe==0.10.14
+PyQt5==5.15.11
+tensorflow==2.16.1
+scikit-learn==1.5.2
+matplotlib==3.9.2
+protobuf==4.25.3
 ```
 
 ## 🚀 Installation
