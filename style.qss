@@ -1,0 +1,267 @@
+/* Main Window */
+QMainWindow, #MainWindow {
+    background-color: #1E1E1E;
+}
+
+/* All Widgets */
+QWidget {
+    font-family: 'Roboto', 'Inter', 'Segoe UI', sans-serif;
+    color: #FFFFFF;
+    font-size: 14px;
+}
+
+/* --- Splash Screen Styles --- */
+#SplashScreen {
+    background-color: #1E1E1E;
+    border: 1px solid #0078D4;
+}
+#SplashTitle {
+    font-size: 48px;
+    font-weight: bold;
+    color: #0078D4; /* Primary Accent Blue */
+}
+#SplashLoading {
+    font-size: 16px;
+    color: #AFAFAF; /* Light Gray */
+}
+
+/* --- Homepage Styles --- */
+#Homepage {
+    background-color: #1E1E1E;
+}
+#LabelHomeTitle {
+    font-size: 56px;
+    font-weight: bold;
+    color: #0078D4;
+}
+#LabelHomeTagline {
+    font-size: 18px;
+    font-style: italic;
+    color: #AFAFAF;
+    padding-bottom: 20px;
+}
+#HomeButtonLayout {
+    padding-top: 20px;
+}
+#HomeButtonLayout QPushButton {
+    font-size: 16px;
+    font-weight: bold;
+    padding: 15px 30px;
+    max-width: 300px;
+}
+#ButtonDisabled {
+    background-color: #444;
+    color: #888;
+}
+
+/* --- NEW: Training Page Styles --- */
+#TrainingPage {
+    background-color: #1E1E1E;
+}
+#TrainingTitle {
+    font-size: 24px;
+    font-weight: bold;
+    color: #0078D4;
+    padding: 10px;
+}
+#TrainingLog {
+    background-color: #000000;
+    color: #E0E0E0;
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 12px;
+    border: 1px solid #444;
+    border-radius: 4px;
+}
+
+/* --- Recognition Page Styles --- */
+#RecognitionPage {
+    background-color: #1E1E1E;
+}
+
+#RecognitionHeaderTitle {
+    font-size: 28px;
+    font-weight: bold;
+    color: #0078D4;
+}
+
+#videoLabel {
+    background-color: #1a1a1a;
+    border: 2px solid #0078D4;
+    border-radius: 10px;
+    color: #666;
+    font-size: 18px;
+}
+
+#predictionBanner {
+    background-color: #0078D4;
+    border-radius: 8px;
+}
+
+#predictionLabel {
+    color: white;
+    font-size: 24px;
+    font-weight: bold;
+}
+
+#confidenceLabel {
+    color: white;
+    font-size: 18px;
+    font-weight: normal;
+}
+
+#startRecognitionButton {
+    background-color: #34A853;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 15px 40px;
+    font-size: 16px;
+    font-weight: bold;
+}
+
+#startRecognitionButton:hover {
+    background-color: #2E8B57;
+}
+
+#startRecognitionButton:pressed {
+    background-color: #228B45;
+}
+
+#stopRecognitionButton {
+    background-color: #D93025;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 15px 40px;
+    font-size: 16px;
+    font-weight: bold;
+}
+
+#stopRecognitionButton:hover {
+    background-color: #A52A2A;
+}
+
+#stopRecognitionButton:disabled {
+    background-color: #666;
+    color: #999;
+}
+
+#recognizeButton {
+    background-color: #8A2BE2;
+    color: white;
+}
+
+#recognizeButton:hover {
+    background-color: #6A1B9A;
+}
+
+#statusIndicator {
+    color: #666;
+    font-size: 20px;
+}
+
+#statusText {
+    color: #666;
+    font-size: 14px;
+}
+
+
+/* Sidebar */
+#Sidebar {
+    background-color: #2D2D2D;
+    border-right: 1px solid #444;
+}
+#Sidebar QLabel { font-size: 16px; font-weight: bold; }
+#SidebarTitle {
+    font-size: 12px;
+    font-weight: bold;
+    color: #AFAFAF;
+    margin-top: 5px;
+    margin-bottom: 0px;
+}
+
+/* Main Content Area */
+#MainContent, #SetupWidget {
+    background-color: #1E1E1E;
+}
+
+/* Labels */
+QLabel { color: #FFFFFF; }
+#LabelHelper { color: #AFAFAF; font-size: 12px; }
+#LabelBigOverlay { font-size: 48px; font-weight: bold; color: rgba(255, 255, 255, 0.9); }
+#LabelRecording {
+    font-size: 24px;
+    font-weight: bold;
+    color: #D93025; /* Red */
+    background-color: rgba(0, 0, 0, 0.5);
+    padding: 5px;
+    border-radius: 5px;
+}
+#LabelCountdown { font-size: 72px; font-weight: bold; color: #FFC300; }
+#LabelProcessing { font-size: 48px; font-weight: bold; color: #0078D4; }
+
+/* Buttons */
+QPushButton {
+    background-color: #0078D4;
+    color: #FFFFFF;
+    border: none;
+    padding: 10px 15px;
+    border-radius: 4px;
+    font-weight: bold;
+}
+QPushButton:hover { background-color: #005A9E; }
+QPushButton:pressed { background-color: #004578; }
+#ButtonStop { background-color: #D93025; }
+#ButtonStop:hover { background-color: #A52A2A; }
+#ButtonGray { background-color: #555; }
+#ButtonGray:hover { background-color: #777; }
+#ButtonGreen { background-color: #34A853; }
+#ButtonGreen:hover { background-color: #2E8B57; }
+/* Special style for Train Model button */
+#ButtonTrain {
+    background-color: #8A2BE2; /* Violet */
+}
+#ButtonTrain:hover {
+    background-color: #6A1B9A;
+}
+#ButtonTrain:disabled {
+    background-color: #444;
+    color: #888;
+}
+
+/* Inputs */
+QLineEdit, QSpinBox, QComboBox {
+    background-color: #2D2D2D;
+    color: #FFFFFF;
+    border: 1px solid #555;
+    border-radius: 4px;
+    padding: 8px;
+    font-size: 14px;
+}
+QComboBox QAbstractItemView {
+    background-color: #2D2D2D;
+    border: 1px solid #555;
+    selection-background-color: #0078D4;
+}
+
+/* List */
+QListWidget {
+    background-color: #2D2D2D;
+    border: 1px solid #555;
+    border-radius: 4px;
+}
+QListWidget::item { padding: 8px; }
+QListWidget::item:hover { background-color: #444; }
+QListWidget::item:selected { background-color: #0078D4; }
+
+/* Progress Bar */
+QProgressBar {
+    border: 1px solid #555;
+    border-radius: 4px;
+    text-align: center;
+    color: #FFFFFF;
+}
+QProgressBar::chunk {
+    background-color: #0078D4;
+    border-radius: 4px;
+}
