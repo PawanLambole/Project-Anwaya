@@ -57,80 +57,59 @@ y = to_categorical(integer_encoded_labels, num_classes=num_actions)
 
 X = np.array(sequences, dtype='float32')
 
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.30, random_state=42, stratify=y)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.20, random_state=32, stratify=y)
 
 print(f"Data shape (X_train): {X_train.shape}")
 print(f"Labels shape (y_train): {y_train.shape}")
 
-# --- 4. BUILD THE IMPROVED LSTM MODEL ---
+# --- 4. BUILD THE LSTM MODEL ---
 
-print("Building improved model...")
+print("Building model...")
 model = Sequential()
 model.add(Input(shape=(SEQUENCE_LENGTH, NUM_FEATURES)))
-
-# First LSTM layer - increased units
-model.add(LSTM(128, return_sequences=True, activation='tanh'))
-model.add(Dropout(0.3))
-
-# Second LSTM layer - increased units
-model.add(LSTM(256, return_sequences=True, activation='tanh'))
-model.add(Dropout(0.3))
-
-# Third LSTM layer - for better temporal feature extraction
-model.add(LSTM(128, return_sequences=False, activation='tanh'))
-model.add(Dropout(0.3))
-
-# Dense layers with batch normalization concept
-model.add(Dense(128, activation='relu'))
-model.add(Dropout(0.4))
-
-model.add(Dense(64, activation='relu'))
-model.add(Dropout(0.3))
-
-model.add(Dense(32, activation='relu'))
+model.add(LSTM(64, return_sequences=True))
 model.add(Dropout(0.2))
-
-# Output layer
+model.add(LSTM(128, return_sequences=False))
+model.add(Dropout(0.2))
+model.add(Dense(64, activation='relu'))
+model.add(Dropout(0.2))
+model.add(Dense(32, activation='relu'))
 model.add(Dense(num_actions, activation='softmax'))
 
-# Use Adam optimizer with custom learning rate
-from keras.optimizers import Adam
-optimizer = Adam(learning_rate=0.001)
-model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['accuracy'])
+model.compile(optimizer='Adam', loss='categorical_crossentropy', metrics=['accuracy'])
 model.summary()
 
 # --- 5. TRAIN THE MODEL ---
 
-# --- NEW: Define improved callbacks ---
+# --- NEW: Define BOTH callbacks ---
 early_stop_callback = EarlyStopping(
     monitor='val_loss',
-    patience=20,  # Increased patience for better convergence
-    restore_best_weights=True,
-    verbose=1
+    patience=10,
+    restore_best_weights=True
 )
 
 reduce_lr_callback = ReduceLROnPlateau(
     monitor='val_loss',
-    factor=0.5,  # Reduce LR by half (less aggressive)
-    patience=8,  # Wait longer before reducing
-    min_lr=0.000001,  # Lower minimum learning rate
+    factor=0.2, # Reduce LR by a factor of 5 (1/5 = 0.2)
+    patience=5, # Reduce if no improvement for 5 epochs
+    min_lr=0.00001, # Don't go below this
     verbose=1
 )
 # --- END NEW ---
 
-print("Training model with improved architecture...")
-EPOCHS = 200  # Increased epochs for better learning
-BATCH_SIZE = 8  # Add batch size for better gradient updates
-
+print("Training model...")
+EPOCHS = 150
 history = model.fit(
     X_train,
     y_train,
-    batch_size=BATCH_SIZE,
     epochs=EPOCHS,
     validation_data=(X_test, y_test),
-    callbacks=[early_stop_callback, reduce_lr_callback],
-    verbose=1
+    callbacks=[early_stop_callback, reduce_lr_callback] # <-- NEW: Add both
 )
+
+print("="*50)
+print("TRAINING COMPLETE")
+print("="*50 + "\n")
 
 print("Model training complete.")
 

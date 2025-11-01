@@ -105,7 +105,7 @@ class RecognitionWorker(QThread):
              if results.right_hand_landmarks else np.zeros(21*3)
         
         return np.concatenate([pose, face, lh, rh])
-    
+
     def run(self):
         """Main recognition loop"""
         if not self.load_model_and_encoder():
