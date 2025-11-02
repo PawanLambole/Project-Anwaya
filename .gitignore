@@ -42,3 +42,4 @@ training_summary.txt
 
 # Logs
 *.log
+.env
