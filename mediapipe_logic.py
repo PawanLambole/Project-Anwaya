@@ -12,9 +12,21 @@ RECORD_SECONDS = 3     # Duration of each recording
 KEYPOINT_SIZE = 1662   # Total features: 132(pose) + 1404(face) + 63(left_hand) + 63(right_hand)
 
 # MediaPipe model quality settings
-MIN_DETECTION_CONFIDENCE = 0.5  # Minimum confidence for detection
-MIN_TRACKING_CONFIDENCE = 0.5   # Minimum confidence for tracking
-MODEL_COMPLEXITY = 1            # 0=Lite, 1=Full, 2=Heavy
+# Raised from 0.5/0.5 to 0.7/0.7 for better landmark accuracy during offline processing.
+# model_complexity=2 (Heavy) is used since this runs offline — no speed penalty.
+MIN_DETECTION_CONFIDENCE = 0.7
+MIN_TRACKING_CONFIDENCE = 0.7
+MODEL_COMPLEXITY = 2  # 0=Lite, 1=Full, 2=Heavy (best accuracy)
+
+# Quality gate: if more than this ratio of sampled frames have zero hand landmarks,
+# a quality_warning signal is emitted to the UI.
+BAD_FRAME_THRESHOLD = 0.50  # 50%
+
+# Hand keypoint slice indices in the 1662-element array
+HAND_LH_START = 132 + 1404          # 1536
+HAND_LH_END   = HAND_LH_START + 63  # 1599
+HAND_RH_START = HAND_LH_END         # 1599
+HAND_RH_END   = HAND_RH_START + 63  # 1662
 
 # --- 2. MEDIAPIPE SETUP ---
 mp_holistic = mp.solutions.holistic
@@ -88,19 +100,30 @@ def extract_keypoints(results):
     # Total: 132 + 1404 + 63 + 63 = 1662 features
     return np.concatenate([pose, face, lh, rh])
 
+def _frame_has_no_hands(keypoints):
+    """Return True if both left and right hand keypoints are all zeros (no hands detected)."""
+    lh_kp = keypoints[HAND_LH_START:HAND_LH_END]
+    rh_kp = keypoints[HAND_RH_START:HAND_RH_END]
+    return np.all(lh_kp == 0) and np.all(rh_kp == 0)
+
+
 # --- 3. PROCESSING THREAD ---
 class ProcessingThread(QThread):
     finished = pyqtSignal(str)
+    # NEW: emits (output_folder, missed_hand_frame_count) when quality is poor
+    quality_warning = pyqtSignal(str, int)
+
     def __init__(self, video_path, output_folder, holistic_model):
         super().__init__()
         self.video_path = video_path
         self.output_folder = output_folder
-        self.holistic_model = holistic_model # Note: We create a new one in-thread
+        self.holistic_model = holistic_model  # Note: We create a new one in-thread
 
     def run(self):
         """
         Process video file to extract keypoint sequences.
-        Improved with better error handling and optimized MediaPipe usage.
+        Uses model_complexity=2 (Heavy) for maximum landmark accuracy.
+        Emits quality_warning if >50% of sampled frames have no hand detections.
         """
         print(f"  [Thread] Processing {self.video_path}...")
         cap_proc = cv2.VideoCapture(self.video_path)
@@ -117,11 +140,12 @@ class ProcessingThread(QThread):
         all_video_keypoints_raw = []
         frame_count = 0
         
-        # Create MediaPipe model once for the thread (more efficient)
+        # Use Heavy model (model_complexity=2) for maximum accuracy during offline processing.
+        # This is slower than the live camera model but produces far better keypoints.
         with mp_holistic.Holistic(
-            min_detection_confidence=0.5, 
-            min_tracking_confidence=0.5,
-            model_complexity=1  # 0=Lite, 1=Full, 2=Heavy (Full is good balance)
+            min_detection_confidence=MIN_DETECTION_CONFIDENCE,
+            min_tracking_confidence=MIN_TRACKING_CONFIDENCE,
+            model_complexity=MODEL_COMPLEXITY
         ) as thread_holistic:
             
             while cap_proc.isOpened():
@@ -136,34 +160,43 @@ class ProcessingThread(QThread):
                 frame_count += 1
         
         cap_proc.release()
-        print(f"  [Thread] Extracted {frame_count} frames from video")
+        print(f"  [Thread] Extracted {frame_count} raw frames from video")
         
-        # Check if we got any keypoints
+        # Handle empty video
         if not all_video_keypoints_raw or frame_count == 0: 
             print(f"  [Thread] WARNING: No keypoints extracted from {self.video_path}.")
             print(f"  [Thread] Creating {SEQUENCE_LENGTH} empty landmark files as fallback...")
             for j in range(SEQUENCE_LENGTH):
                 npy_path = os.path.join(self.output_folder, f"{j}.npy")
                 np.save(npy_path, np.zeros(KEYPOINT_SIZE))
+            self.quality_warning.emit(self.output_folder, SEQUENCE_LENGTH)
             self.finished.emit(self.output_folder)
             return 
 
         num_frames = len(all_video_keypoints_raw)
         
         # Sample frames evenly across the video to get exactly SEQUENCE_LENGTH frames
-        if num_frames >= SEQUENCE_LENGTH:
-            # Use linspace for even sampling
-            indices = np.linspace(0, num_frames - 1, SEQUENCE_LENGTH, dtype=int)
-        else:
-            # If video has fewer frames than needed, repeat frames to fill
-            print(f"  [Thread] WARNING: Video has only {num_frames} frames, expected {SEQUENCE_LENGTH}")
-            indices = np.linspace(0, num_frames - 1, SEQUENCE_LENGTH, dtype=int)
+        indices = np.linspace(0, num_frames - 1, SEQUENCE_LENGTH, dtype=int)
         
-        # Save sampled keypoints
+        # Save sampled keypoints and count bad frames (no hands detected)
+        missed_hand_frames = 0
         for j, frame_index in enumerate(indices):
             keypoints_to_save = all_video_keypoints_raw[frame_index]
+            
+            # Quality check: count frames where no hands were detected
+            if _frame_has_no_hands(keypoints_to_save):
+                missed_hand_frames += 1
+
             npy_path = os.path.join(self.output_folder, f"{j}.npy")
             np.save(npy_path, keypoints_to_save)
         
+        # --- Post-save quality validation ---
+        bad_ratio = missed_hand_frames / SEQUENCE_LENGTH
+        if bad_ratio > BAD_FRAME_THRESHOLD:
+            print(f"  [Thread] ⚠️  Quality Warning: {missed_hand_frames}/{SEQUENCE_LENGTH} sampled frames had NO hand detection ({bad_ratio*100:.0f}%). This video may produce bad training data.")
+            self.quality_warning.emit(self.output_folder, missed_hand_frames)
+        else:
+            print(f"  [Thread] ✓ Quality OK: Only {missed_hand_frames}/{SEQUENCE_LENGTH} frames had missing hands ({bad_ratio*100:.0f}%).")
+
         print(f"  [Thread] ✓ Successfully saved {SEQUENCE_LENGTH} landmark files to {self.output_folder}/")
         self.finished.emit(self.output_folder)

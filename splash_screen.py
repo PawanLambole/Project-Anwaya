@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QDesktopWidget
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QDesktopWidget
 from PyQt5.QtCore import Qt
 
 class SplashScreen(QWidget):
@@ -6,15 +6,30 @@ class SplashScreen(QWidget):
         super().__init__()
         self.setObjectName("SplashScreen")
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
-        self.setFixedSize(500, 300)
+        self.setFixedSize(700, 450)
         
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignCenter)
         
-        title = QLabel("Project ANWAYA")
-        title.setObjectName("SplashTitle")
-        title.setAlignment(Qt.AlignCenter)
-        layout.addWidget(title)
+        title_layout = QHBoxLayout()
+        title_layout.setAlignment(Qt.AlignCenter)
+        
+        proj_label = QLabel("Project ")
+        proj_label.setObjectName("SplashTitleNormal")
+        proj_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        title_layout.addWidget(proj_label)
+        
+        anv_label = QLabel("Anvaya")
+        anv_label.setObjectName("SplashTitleSamarkan")
+        anv_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        title_layout.addWidget(anv_label)
+        
+        layout.addLayout(title_layout)
+        
+        self.subtitle = QLabel("Personalised Customisable Sign Language to Text Converter")
+        self.subtitle.setAlignment(Qt.AlignCenter)
+        self.subtitle.setStyleSheet("color: #656D76; font-size: 16px;")
+        layout.addWidget(self.subtitle)
         
         loading = QLabel("Loading Application...")
         loading.setObjectName("SplashLoading")

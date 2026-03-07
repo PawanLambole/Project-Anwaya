@@ -18,6 +18,12 @@ def load_stylesheet():
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     
+    from PyQt5.QtGui import QFontDatabase
+    import os
+    font_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "samarkan.ttf")
+    if os.path.exists(font_path):
+        QFontDatabase.addApplicationFont(font_path)
+    
     # Load and apply the stylesheet
     stylesheet = load_stylesheet()
     app.setStyleSheet(stylesheet)

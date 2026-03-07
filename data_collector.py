@@ -8,10 +8,21 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QPushButton, QLabel, QLineEdit, QSpinBox, QListWidget, 
     QStackedWidget, QFrame, QProgressBar, QSizePolicy, QComboBox,
-    QGridLayout, QMessageBox
+    QGridLayout, QMessageBox, QCompleter
 )
 from PyQt5.QtGui import QImage, QPixmap, QFont
-from PyQt5.QtCore import QTimer, Qt, QThread, pyqtSignal
+from PyQt5.QtCore import QTimer, Qt, QThread, pyqtSignal, QStringListModel
+
+# Import processing thread and MediaPipe helpers from mediapipe_logic
+from mediapipe_logic import (
+    ProcessingThread,
+    mediapipe_detection,
+    draw_styled_landmarks,
+    extract_keypoints,
+    check_detection_quality,
+    mp_holistic,
+    mp_drawing,
+)
 
 # --- 1. SCRIPT PARAMETERS (From your script) ---
 DATA_PATH = os.path.join('ISL_Data')     # Path for raw videos
@@ -20,115 +31,7 @@ SEQUENCE_LENGTH = 30
 RECORD_SECONDS = 3
 KEYPOINT_SIZE = 1662
 
-# --- 2. MEDIAPIPE SETUP (From your script) ---
-mp_holistic = mp.solutions.holistic
-mp_drawing = mp.solutions.drawing_utils
-
-def mediapipe_detection(image, model):
-    """
-    Performs landmark detection on an image.
-    """
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB) # Color conversion
-    image.flags.writeable = False                  # Make image non-writeable
-    results = model.process(image)                 # Make detection
-    image.flags.writeable = True                   # Make image writeable
-    image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR) # Color conversion back
-    return image, results
-
-def draw_styled_landmarks(image, results):
-    """
-    Draws the landmarks on the image with the clean style.
-    """
-    # 1. Pose connections (Green)
-    mp_drawing.draw_landmarks(image, results.pose_landmarks, mp_holistic.POSE_CONNECTIONS,
-                             mp_drawing.DrawingSpec(color=(255, 255, 255), thickness=1, circle_radius=1), 
-                             mp_drawing.DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=1)) 
-    
-    # 2. Left hand connections (Blue)
-    mp_drawing.draw_landmarks(image, results.left_hand_landmarks, mp_holistic.HAND_CONNECTIONS, 
-                             mp_drawing.DrawingSpec(color=(255, 255, 255), thickness=1, circle_radius=1), 
-                             mp_drawing.DrawingSpec(color=(255, 0, 0), thickness=2, circle_radius=1)) 
-    
-    # 3. Right hand connections (Red)
-    mp_drawing.draw_landmarks(image, results.right_hand_landmarks, mp_holistic.HAND_CONNECTIONS, 
-                             mp_drawing.DrawingSpec(color=(255, 255, 255), thickness=1, circle_radius=1), 
-                             mp_drawing.DrawingSpec(color=(0, 0, 255), thickness=2, circle_radius=1))
-
-def extract_keypoints(results):
-    """
-    Extracts the keypoints from the MediaPipe results and flattens them into a single array.
-    """
-    pose = np.array([[res.x, res.y, res.z, res.visibility] for res in results.pose_landmarks.landmark]).flatten() if results.pose_landmarks else np.zeros(33*4)
-    face = np.array([[res.x, res.y, res.z] for res in results.face_landmarks.landmark]).flatten() if results.face_landmarks else np.zeros(468*3)
-    lh = np.array([[res.x, res.y, res.z] for res in results.left_hand_landmarks.landmark]).flatten() if results.left_hand_landmarks else np.zeros(21*3)
-    rh = np.array([[res.x, res.y, res.z] for res in results.right_hand_landmarks.landmark]).flatten() if results.right_hand_landmarks else np.zeros(21*3)
-    return np.concatenate([pose, face, lh, rh])
-
-# --- 3. PROCESSING THREAD (To prevent UI freezing) ---
-
-class ProcessingThread(QThread):
-    """
-    Runs the landmark processing in a separate thread.
-    """
-    finished = pyqtSignal(str) # Signal to emit when done
-
-    def __init__(self, video_path, output_folder, holistic_model):
-        super().__init__()
-        self.video_path = video_path
-        self.output_folder = output_folder
-        self.holistic_model = holistic_model
-
-    def run(self):
-        """
-        This is the function that will be executed in the new thread.
-        """
-        print(f"  [Thread] Processing {self.video_path}...")
-        
-        # --- YOUR process_and_save_landmarks FUNCTION ---
-        # This function is run in the background.
-        
-        cap_proc = cv2.VideoCapture(self.video_path)
-        all_video_keypoints_raw = []
-
-        while(cap_proc.isOpened()):
-            ret, frame = cap_proc.read()
-            if not ret:
-                break 
-
-            # NOTE: We can't pass the main 'holistic' model to a new thread.
-            # We must create a NEW model instance *within* this thread.
-            with mp_holistic.Holistic(min_detection_confidence=0.5, min_tracking_confidence=0.5) as thread_holistic:
-                image, results = mediapipe_detection(frame, thread_holistic)
-                keypoints = extract_keypoints(results)
-                all_video_keypoints_raw.append(keypoints)
-
-        cap_proc.release()
-        
-        if not all_video_keypoints_raw: 
-            print(f"  [Thread] Warning: No keypoints from {self.video_path}. Creating {SEQUENCE_LENGTH} empty files.")
-            for j in range(SEQUENCE_LENGTH):
-                npy_path = os.path.join(self.output_folder, f"{j}.npy")
-                np.save(npy_path, np.zeros(KEYPOINT_SIZE))
-            self.finished.emit(self.output_folder) # Emit signal
-            return 
-
-        num_frames = len(all_video_keypoints_raw)
-        indices = np.linspace(
-            0,             
-            num_frames - 1,
-            SEQUENCE_LENGTH, 
-            dtype=int        
-        )
-        
-        for j, frame_index in enumerate(indices):
-            keypoints_to_save = all_video_keypoints_raw[frame_index]
-            npy_path = os.path.join(self.output_folder, f"{j}.npy")
-            np.save(npy_path, keypoints_to_save)
-        
-        print(f"  [Thread] Successfully saved {SEQUENCE_LENGTH} landmark files to {self.output_folder}/")
-        # --- END OF YOUR FUNCTION ---
-
-        self.finished.emit(self.output_folder) # Emit signal
+# (MediaPipe helpers and ProcessingThread are imported from mediapipe_logic.py above)
 
 
 # --- 4. STYLING (QSS - Qt StyleSheet) ---
@@ -252,6 +155,29 @@ APP_STYLESHEET = """
         padding: 8px;
         font-size: 14px;
     }
+    QSpinBox {
+        padding-right: 32px;
+    }
+    QSpinBox::up-button {
+        subcontrol-origin: border;
+        subcontrol-position: top right;
+        width: 24px;
+        background-color: #3A3A3A;
+        border-left: 1px solid #555;
+        border-bottom: 1px solid #555; /* divider */
+        border-top-right-radius: 4px;
+    }
+    QSpinBox::down-button {
+        subcontrol-origin: border;
+        subcontrol-position: bottom right;
+        width: 24px;
+        background-color: #3A3A3A;
+        border-left: 1px solid #555;
+        border-bottom-right-radius: 4px;
+    }
+    QSpinBox::up-button:hover, QSpinBox::down-button:hover {
+        background-color: #444;
+    }
     QComboBox QAbstractItemView {
         background-color: #2D2D2D;
         border: 1px solid #555;
@@ -329,7 +255,11 @@ class CollectionApp(QMainWindow):
         # --- Init ---
         self.initUI()
         self.load_existing_actions()
-        self.setStyleSheet(APP_STYLESHEET)
+        try:
+            with open("style.qss", "r") as f:
+                self.setStyleSheet(f.read())
+        except FileNotFoundError:
+            self.setStyleSheet(APP_STYLESHEET)
 
     def initUI(self):
         self.central_widget = QWidget()
@@ -389,6 +319,11 @@ class CollectionApp(QMainWindow):
         sidebar_layout.addWidget(self.action_list, 1) # Stretch
 
         # --- Current Session ---
+        sidebar_layout.addWidget(QLabel("ACTIVE MODEL", objectName="SidebarTitle"))
+        self.model_select = QComboBox()
+        self.model_select.currentIndexChanged.connect(self.on_model_changed)
+        sidebar_layout.addWidget(self.model_select)
+
         sidebar_layout.addWidget(QLabel("SESSION", objectName="SidebarTitle"))
         self.session_action_label = QLabel("Action: N/A")
         sidebar_layout.addWidget(self.session_action_label)
@@ -441,13 +376,35 @@ class CollectionApp(QMainWindow):
 
         layout.addStretch(1)
 
+        # Dataset Name
+        layout.addWidget(QLabel("Dataset Name"))
+        self.dataset_name_input = QComboBox()
+        self.dataset_name_input.setEditable(True)
+        self.dataset_name_input.setPlaceholderText("e.g., Default")
+        self.dataset_name_input.setFont(QFont('Roboto', 16))
+        self.dataset_name_input.currentTextChanged.connect(self.update_action_suggestions)
+        layout.addWidget(self.dataset_name_input)
+        layout.addWidget(QLabel("(Select from list or type new)", objectName="LabelHelper"))
+
         # Action Name
         layout.addWidget(QLabel("Action Name (Marathi)"))
-        self.action_name_input = QLineEdit()
+        self.action_name_input = QComboBox()
+        self.action_name_input.setEditable(True)
         self.action_name_input.setPlaceholderText("e.g., आभार")
         self.action_name_input.setFont(QFont('Roboto', 16))
+        # Optional: enable clear button and autocomplete style for editable combo
+        self.action_name_input.lineEdit().setClearButtonEnabled(True)
+        
+        # Configure the completer for better autocompletion
+        completer = self.action_name_input.completer()
+        if completer is not None:
+            completer.setCompletionMode(QCompleter.PopupCompletion)
+            completer.setFilterMode(Qt.MatchContains)
+            completer.setCaseSensitivity(Qt.CaseInsensitive)
+            
         layout.addWidget(self.action_name_input)
-        layout.addWidget(QLabel("(Select from list or type new)", objectName="LabelHelper"))
+        
+        layout.addWidget(QLabel("(Select from existing actions or enter a new one)", objectName="LabelHelper"))
 
         # Number of Videos
         layout.addWidget(QLabel("Number of Videos to Record"))
@@ -538,23 +495,91 @@ class CollectionApp(QMainWindow):
     
     def load_existing_actions(self):
         self.action_list.clear()
+        
+        # Initialize attributes if they don't exist yet
+        if not hasattr(self, 'dataset_name_input'):
+            return # UI not fully constructed yet
+            
+        self.dataset_name_input.blockSignals(True)
+        self.dataset_name_input.clear()
+        self.model_select.blockSignals(True)
+        self.model_select.clear()
+        
+        if not hasattr(self, 'active_dataset'):
+            self.active_dataset = "Default"
+            
         if not os.path.exists(DATA_PATH):
             os.makedirs(DATA_PATH)
         
         try:
-            actions = [d for d in os.listdir(DATA_PATH) if os.path.isdir(os.path.join(DATA_PATH, d))]
+            datasets = [d for d in os.listdir(DATA_PATH) if os.path.isdir(os.path.join(DATA_PATH, d))]
+            datasets.sort()
+            
+            if not datasets:
+                datasets = ["Default"]
+                
+            self.dataset_name_input.addItems(datasets)
+            self.model_select.addItems(datasets)
+            
+            if self.active_dataset in datasets:
+                self.model_select.setCurrentText(self.active_dataset)
+                self.dataset_name_input.setCurrentText(self.active_dataset)
+            else:
+                self.active_dataset = datasets[0]
+                self.model_select.setCurrentText(self.active_dataset)
+                self.dataset_name_input.setCurrentText(self.active_dataset)
+                
+            dataset_path = os.path.join(DATA_PATH, self.active_dataset)
+            if not os.path.exists(dataset_path):
+                os.makedirs(dataset_path)
+                
+            actions = [d for d in os.listdir(dataset_path) if os.path.isdir(os.path.join(dataset_path, d))]
             actions.sort()
             
             # Get video counts
             action_items = []
             for action in actions:
-                vid_count = len([f for f in os.listdir(os.path.join(DATA_PATH, action)) if f.endswith(('.mp4', '.avi', '.mov', '.webm'))])
+                vid_count = len([f for f in os.listdir(os.path.join(dataset_path, action)) if f.endswith(('.mp4', '.avi', '.mov', '.webm'))])
                 action_items.append(f"{action} ({vid_count})")
 
             self.action_list.addItems(action_items)
+
+            # --- Refresh action dropdown ---
+            # Block signals to avoid triggering any textChanged events unnecessarily
+            self.action_name_input.blockSignals(True)
+            self.action_name_input.clear()
+            self.action_name_input.addItems(actions)
+            # Clear selection so placeholder shows
+            self.action_name_input.setCurrentIndex(-1)
+            self.action_name_input.blockSignals(False)
         except Exception as e:
             print(f"Error loading actions: {e}")
+        finally:
+            self.model_select.blockSignals(False)
+            self.dataset_name_input.blockSignals(False)
             
+    def on_model_changed(self, index):
+        self.active_dataset = self.model_select.currentText()
+        self.load_existing_actions()
+
+    def update_action_suggestions(self, dataset_name):
+        dataset_name = dataset_name.strip()
+        if not dataset_name:
+            dataset_name = "Default"
+            
+        dataset_path = os.path.join(DATA_PATH, dataset_name)
+        actions = []
+        if os.path.exists(dataset_path):
+            actions = [d for d in os.listdir(dataset_path) if os.path.isdir(os.path.join(dataset_path, d))]
+            actions.sort()
+            
+        self.action_name_input.blockSignals(True)
+        current_text = self.action_name_input.currentText()
+        self.action_name_input.clear()
+        self.action_name_input.addItems(actions)
+        self.action_name_input.setCurrentText(current_text)
+        self.action_name_input.blockSignals(False)
+
     def filter_actions(self, text):
         for i in range(self.action_list.count()):
             item = self.action_list.item(i)
@@ -562,12 +587,16 @@ class CollectionApp(QMainWindow):
 
     def on_action_clicked(self, item):
         action_name = item.text().split(' (')[0] # Get name without count
-        self.action_name_input.setText(action_name)
+        self.action_name_input.setCurrentText(action_name)
 
     # --- State Machine & Session Logic ---
 
     def start_session(self):
-        self.action_name = self.action_name_input.text().strip()
+        dataset_name = self.dataset_name_input.currentText().strip()
+        if not dataset_name:
+            dataset_name = "Default"
+            
+        self.action_name = self.action_name_input.currentText().strip()
         self.num_videos = self.num_videos_input.value()
         
         if not self.action_name:
@@ -575,8 +604,8 @@ class CollectionApp(QMainWindow):
             return
             
         # --- Create directories (from your script) ---
-        self.action_video_dir = os.path.join(DATA_PATH, self.action_name)
-        self.action_landmark_dir = os.path.join(OUTPUT_PATH, self.action_name)
+        self.action_video_dir = os.path.join(DATA_PATH, dataset_name, self.action_name)
+        self.action_landmark_dir = os.path.join(OUTPUT_PATH, dataset_name, self.action_name)
         os.makedirs(self.action_video_dir, exist_ok=True)
         os.makedirs(self.action_landmark_dir, exist_ok=True)
         
@@ -669,7 +698,13 @@ class CollectionApp(QMainWindow):
             
         elif new_state == STATE_RECORDING:
             self.recording_label.setVisible(True)
-            self.status_text_label.setText(f"Recording video {self.current_video_num}...")
+            # Number of videos fully completed before this one started
+            completed = self.current_video_num - self.start_num
+            self.status_text_label.setText(
+                f"Recording #{self.current_video_num + 1}  |  {completed} of {self.num_videos} recorded"
+            )
+            # Update progress bar to show completed count (not including the one currently recording)
+            self.session_progress_bar.setValue(completed)
             self.record_start_time = time.time()
             self.init_video_writer()
 
@@ -744,6 +779,28 @@ class CollectionApp(QMainWindow):
         image, results = mediapipe_detection(frame, self.holistic)
         draw_styled_landmarks(image, results)
         
+        # --- Live Quality Indicator ---
+        # Shows a coloured dot + text in the top-left corner during recording
+        # so the user immediately knows if MediaPipe is tracking their hands.
+        if self.app_state == STATE_RECORDING:
+            has_hands, has_pose, quality_score = check_detection_quality(results)
+            
+            if results.left_hand_landmarks and results.right_hand_landmarks:
+                dot_color = (0, 220, 0)     # 🟢 Green  — both hands detected
+                label_text = "Hands: Both"
+            elif results.left_hand_landmarks or results.right_hand_landmarks:
+                dot_color = (0, 180, 255)   # 🟡 Amber  — one hand detected
+                label_text = "Hands: One"
+            else:
+                dot_color = (0, 0, 220)     # 🔴 Red    — no hands detected
+                label_text = "Hands: None!"
+
+            # Draw filled circle indicator
+            cv2.circle(image, (18, 18), 12, dot_color, -1)
+            cv2.circle(image, (18, 18), 12, (255, 255, 255), 1)  # white border
+            cv2.putText(image, label_text, (36, 24),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
+
         # --- State-specific actions ---
         if self.app_state == STATE_RECORDING:
             elapsed = time.time() - self.record_start_time
@@ -784,10 +841,28 @@ class CollectionApp(QMainWindow):
         self.processing_thread = ProcessingThread(
             self.video_save_path, 
             self.landmark_save_folder,
-            self.holistic # This is just passed, thread will create its own
+            self.holistic  # Thread creates its own Heavy model internally
         )
         self.processing_thread.finished.connect(self.on_processing_finished)
+        # Connect the new quality_warning signal
+        self.processing_thread.quality_warning.connect(self.on_quality_warning)
         self.processing_thread.start()
+
+    def on_quality_warning(self, output_folder, missed_frames):
+        """Called when ProcessingThread detects poor hand tracking in a video."""
+        video_num = os.path.basename(output_folder)
+        total = SEQUENCE_LENGTH
+        pct = int((missed_frames / total) * 100)
+        print(f"[QualityWarning] Video {video_num}: {missed_frames}/{total} frames had no hand detection ({pct}%).")
+        QMessageBox.warning(
+            self,
+            "⚠️ Poor Recording Quality",
+            f"Video <b>#{video_num}</b> had <b>{missed_frames} out of {total}</b> frames with no hands detected ({pct}% bad).\n\n"
+            f"This video may produce inaccurate training data.\n\n"
+            f"Tip: Make sure your hands are clearly visible and well-lit. "
+            f"This video has still been saved — you can collect more to compensate, or delete it manually from:\n"
+            f"{os.path.dirname(output_folder)}"
+        )
 
     def on_processing_finished(self, output_folder):
         print(f"Processing finished for {output_folder}")

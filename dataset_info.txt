@@ -1,0 +1,65 @@
+
+ISL Dataset Information - first testing model
+Generated: 2026-03-01 20:30:00
+==================================================
+
+Total Actions: 9
+
+==================================================
+ACTION DETAILS:
+==================================================
+
+
+Action: जा
+  - Videos: 30
+  - Processed: 30
+  - Path: ISL_Data\first testing model\जा
+
+
+Action: जेवन
+  - Videos: 30
+  - Processed: 30
+  - Path: ISL_Data\first testing model\जेवन
+
+
+Action: धन्यवाद
+  - Videos: 35
+  - Processed: 35
+  - Path: ISL_Data\first testing model\धन्यवाद
+
+
+Action: नमस्कार
+  - Videos: 30
+  - Processed: 30
+  - Path: ISL_Data\first testing model\नमस्कार
+
+
+Action: नाही
+  - Videos: 10
+  - Processed: 10
+  - Path: ISL_Data\first testing model\नाही
+
+
+Action: मदत करा
+  - Videos: 30
+  - Processed: 30
+  - Path: ISL_Data\first testing model\मदत करा
+
+
+Action: मला
+  - Videos: 30
+  - Processed: 30
+  - Path: ISL_Data\first testing model\मला
+
+
+Action: माफ करा
+  - Videos: 35
+  - Processed: 35
+  - Path: ISL_Data\first testing model\माफ करा
+
+
+Action: सावधान
+  - Videos: 30
+  - Processed: 30
+  - Path: ISL_Data\first testing model\सावधान
+

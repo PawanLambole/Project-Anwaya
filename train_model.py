@@ -10,10 +10,36 @@ from keras.models import Sequential
 from keras.layers import LSTM, Dense, Dropout, Input
 from keras.callbacks import EarlyStopping, ReduceLROnPlateau # <-- NEW: Import
 
+import argparse
+
+# --- Parse arguments ---
+parser = argparse.ArgumentParser()
+parser.add_argument('--dataset', type=str, default='Default', help='Name of the dataset folder')
+args = parser.parse_args()
+
 # --- 1. SET YOUR PARAMETERS ---
-PROCESSED_DATA_PATH = os.path.join('ISL_Processed')
+DATASET_NAME = args.dataset
+PROCESSED_DATA_PATH = os.path.join('ISL_Processed', DATASET_NAME)
+MODEL_DIR = os.path.join('model', DATASET_NAME)
+os.makedirs(MODEL_DIR, exist_ok=True)
+STOP_FLAG_PATH = os.path.join(MODEL_DIR, 'stop_training.flag')
+
+print(f"Training on dataset: {DATASET_NAME}")
+
+# Clean up any existing stop flag
+if os.path.exists(STOP_FLAG_PATH):
+    os.remove(STOP_FLAG_PATH)
+
 # Ensure actions are sorted so the LabelEncoder is consistent
+if not os.path.exists(PROCESSED_DATA_PATH):
+    print(f"Error: Directory {PROCESSED_DATA_PATH} does not exist.")
+    exit(1)
+    
 actions = np.array(sorted([d for d in os.listdir(PROCESSED_DATA_PATH) if os.path.isdir(os.path.join(PROCESSED_DATA_PATH, d))]))
+if len(actions) == 0:
+    print(f"Error: No actions found in {PROCESSED_DATA_PATH}.")
+    exit(1)
+    
 num_actions = len(actions)
 
 SEQUENCE_LENGTH = 30
@@ -24,7 +50,8 @@ print("Loading data...")
 sequences = []
 labels = []
 
-for action in actions:
+for i, action in enumerate(actions):
+    print(f"[LOAD_PROGRESS] {i+1}/{num_actions}")
     action_path = os.path.join(PROCESSED_DATA_PATH, action)
     
     video_folders = [d for d in os.listdir(action_path) if os.path.isdir(os.path.join(action_path, d))]
@@ -42,12 +69,14 @@ for action in actions:
                 res = np.load(frame_path)
                 window.append(res)
             else:
-                print(f"Warning: Missing frame {frame_path}. Appending zeros.")
+                # Silenced missing frame prints to avoid bloating the UI log during loading
+                # print(f"Warning: Missing frame {frame_path}. Appending zeros.")
                 window.append(np.zeros(NUM_FEATURES))
         
         sequences.append(window)
         labels.append(action)
 
+print(f"[LOAD_PROGRESS] {num_actions}/{num_actions}")
 print(f"Loaded {len(sequences)} total sequences.")
 
 # --- 3. CONVERT LABELS AND SEQUENCES ---
@@ -82,6 +111,15 @@ model.summary()
 # --- 5. TRAIN THE MODEL ---
 
 # --- NEW: Define BOTH callbacks ---
+from keras.callbacks import Callback
+
+class GracefulStopCallback(Callback):
+    def on_epoch_end(self, epoch, logs=None):
+        if os.path.exists(STOP_FLAG_PATH):
+            print(f"\n[INFO] Graceful stop requested (file {STOP_FLAG_PATH} found).")
+            print("[INFO] Stopping training early but saving the model and generating reports.")
+            self.model.stop_training = True
+
 early_stop_callback = EarlyStopping(
     monitor='val_loss',
     patience=10,
@@ -95,6 +133,7 @@ reduce_lr_callback = ReduceLROnPlateau(
     min_lr=0.00001, # Don't go below this
     verbose=1
 )
+graceful_stop_callback = GracefulStopCallback()
 # --- END NEW ---
 
 print("Training model...")
@@ -104,7 +143,7 @@ history = model.fit(
     y_train,
     epochs=EPOCHS,
     validation_data=(X_test, y_test),
-    callbacks=[early_stop_callback, reduce_lr_callback] # <-- NEW: Add both
+    callbacks=[early_stop_callback, reduce_lr_callback, graceful_stop_callback] # <-- NEW: Add graceful stop
 )
 
 print("="*50)
@@ -123,7 +162,8 @@ print(f"Test Loss: {loss:.4f}")
 print("Plotting training history...")
 
 # Create model report directory if it doesn't exist
-os.makedirs('model report', exist_ok=True)
+REPORT_DIR = os.path.join('model report', DATASET_NAME)
+os.makedirs(REPORT_DIR, exist_ok=True)
 
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
 
@@ -143,8 +183,8 @@ ax2.set_ylabel('Loss')
 ax2.set_xlabel('Epoch')
 ax2.legend(loc='upper right')
 
-plt.savefig('model report/training_history.png')
-print("Training history plot saved as 'model report/training_history.png'")
+plt.savefig(os.path.join(REPORT_DIR, 'training_history.png'))
+print(f"Training history plot saved as '{REPORT_DIR}/training_history.png'")
 # plt.show() # Uncomment this if you are running in a local environment
 
 # --- 8. NEW: DETAILED CLASSIFICATION REPORT ---
@@ -165,16 +205,17 @@ report = classification_report(
 )
 
 # Save the report to a file first
-with open('model report/classification_report.txt', 'w', encoding='utf-8') as f: # <-- FIX 2: Fix for the UnicodeEncodeError
+report_path = os.path.join(REPORT_DIR, 'classification_report.txt')
+with open(report_path, 'w', encoding='utf-8') as f: # <-- FIX 2: Fix for the UnicodeEncodeError
     f.write(report)
-print("Classification report saved as 'model report/classification_report.txt'")
+print(f"Classification report saved as '{report_path}'")
 
 # Try to print, but handle encoding errors for Marathi text
 try:
     print(report)
 except UnicodeEncodeError:
     print("Classification report contains Marathi characters.")
-    print("Please open 'model report/classification_report.txt' to view the full report.")
+    print(f"Please open '{report_path}' to view the full report.")
 
 # --- NEW: SAVE TRAINING SUMMARY ---
 print("Saving training summary...")
@@ -218,31 +259,35 @@ Final Validation Accuracy: {history.history['val_accuracy'][-1] * 100:.2f}%
 Final Training Loss: {history.history['loss'][-1]:.4f}
 Final Validation Loss: {history.history['val_loss'][-1]:.4f}
 
-SAVED FILES:
+FINALLY SAVED FILES:
 -----------
-Model: model/isl_model.keras
-Label Encoder: model/label_encoder.pkl
-Training History Plot: model report/training_history.png
-Classification Report: model report/classification_report.txt
-Training Summary: model report/training_summary.txt
+Model: model/{DATASET_NAME}/{DATASET_NAME}_model.keras
+Label Encoder: model/{DATASET_NAME}/{DATASET_NAME}_label_encoder.pkl
+Training History Plot: {REPORT_DIR}/training_history.png
+Classification Report: {REPORT_DIR}/classification_report.txt
+Training Summary: {REPORT_DIR}/training_summary.txt
 
 ===============================================
 """
 
-with open('model report/training_summary.txt', 'w', encoding='utf-8') as f:
+summary_path = os.path.join(REPORT_DIR, 'training_summary.txt')
+with open(summary_path, 'w', encoding='utf-8') as f:
     f.write(summary)
-print("Training summary saved as 'model report/training_summary.txt'")
+print(f"Training summary saved as '{summary_path}'")
 # --- END NEW ---
 
 # --- 9. SAVE MODEL AND ENCODER (Renumbered) ---
 # Create model directory if it doesn't exist
-os.makedirs('model', exist_ok=True)
+MODEL_DIR = os.path.join('model', DATASET_NAME)
+os.makedirs(MODEL_DIR, exist_ok=True)
 
-model.save('model/isl_model.keras')
-print("Model saved as 'model/isl_model.keras'")
+model_path = os.path.join(MODEL_DIR, f'{DATASET_NAME}_model.keras')
+model.save(model_path)
+print(f"Model saved as '{model_path}'")
 
-with open('model/label_encoder.pkl', 'wb') as f:
+encoder_path = os.path.join(MODEL_DIR, f'{DATASET_NAME}_label_encoder.pkl')
+with open(encoder_path, 'wb') as f:
     pickle.dump(label_encoder, f)
-print("Label encoder saved as 'model/label_encoder.pkl'")
+print(f"Label encoder saved as '{encoder_path}'")
 
 print("\n--- SCRIPT FINISHED ---")

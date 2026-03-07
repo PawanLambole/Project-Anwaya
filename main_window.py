@@ -4,7 +4,8 @@ import os
 import time
 import sys
 import subprocess # <-- NEW: For running external script
-from PyQt5.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QStackedWidget, QMessageBox
+import re # <-- NEW: For parsing training logs
+from PyQt5.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QStackedWidget, QMessageBox, QSplitter, QLabel)
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtCore import QTimer, Qt, QThread, pyqtSignal # <-- NEW: QThread, pyqtSignal
 
@@ -12,8 +13,8 @@ from PyQt5.QtCore import QTimer, Qt, QThread, pyqtSignal # <-- NEW: QThread, pyq
 from ui_definitions import (
     create_sidebar, create_home_widget, 
     create_setup_widget, create_collection_widget,
-    create_training_widget, create_recognition_widget, # <-- NEW
-    create_manage_data_widget # <-- NEW
+    create_training_widget, create_recognition_widget,
+    create_manage_data_widget, create_top_menubar
 )
 from mediapipe_logic import (
     mediapipe_detection, draw_styled_landmarks, ProcessingThread,
@@ -42,10 +43,13 @@ class TrainingThread(QThread):
     and emits its stdout line by line.
     """
     log_update = pyqtSignal(str)
+    load_progress_update = pyqtSignal(int, int)
+    epoch_update = pyqtSignal(int, int)
     
-    def __init__(self):
+    def __init__(self, dataset_name):
         super().__init__()
         self.process = None
+        self.dataset_name = dataset_name
 
     def run(self):
         print("Starting training thread...")
@@ -53,7 +57,7 @@ class TrainingThread(QThread):
             # We use sys.executable to ensure we use the same python interpreter
             # (e.g., from the virtual environment)
             self.process = subprocess.Popen(
-                [sys.executable, 'train_model.py'],
+                [sys.executable, '-u', 'train_model.py', '--dataset', self.dataset_name],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -65,7 +69,20 @@ class TrainingThread(QThread):
             for line in iter(self.process.stdout.readline, ''):
                 if not line:
                     break
-                self.log_update.emit(line.strip())
+                stripped_line = line.strip()
+                self.log_update.emit(stripped_line)
+                
+                # Parse loading progress: [LOAD_PROGRESS] 5/10
+                load_match = re.search(r'\[LOAD_PROGRESS\]\s+(\d+)/(\d+)', stripped_line)
+                if load_match:
+                    current, total = int(load_match.group(1)), int(load_match.group(2))
+                    self.load_progress_update.emit(current, total)
+                
+                # Parse epoch progress: Epoch 1/150
+                epoch_match = re.search(r'Epoch\s+(\d+)/(\d+)', stripped_line)
+                if epoch_match:
+                    current, total = int(epoch_match.group(1)), int(epoch_match.group(2))
+                    self.epoch_update.emit(current, total)
 
             self.process.stdout.close()
             self.process.wait()
@@ -78,6 +95,20 @@ class TrainingThread(QThread):
             self.log_update.emit("Make sure 'train_model.py' is in the same folder.")
             self.log_update.emit("Ensure all requirements are installed (tensorflow, sklearn, etc.)")
 
+    def request_graceful_stop(self):
+        # Create the stop_training.flag file
+        model_dir = os.path.join('model', self.dataset_name)
+        os.makedirs(model_dir, exist_ok=True)
+        stop_flag_path = os.path.join(model_dir, 'stop_training.flag')
+        
+        try:
+            with open(stop_flag_path, 'w') as f:
+                f.write('STOP')
+            print(f"Graceful stop requested. Flag created at {stop_flag_path}")
+            self.log_update.emit(f"\n[INFO] Graceful stop requested...")
+        except Exception as e:
+            print(f"Failed to create stop flag: {e}")
+
     def stop(self):
         if self.process and self.process.poll() is None:
             print("Terminating training process...")
@@ -89,9 +120,10 @@ class TrainingThread(QThread):
 class CollectionApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Project ANWAYA: Data Collector")
+        self.setWindowTitle("Anvaya")
         self.setGeometry(100, 100, 1280, 720)
         self.setObjectName("MainWindow")
+        self.setWindowFlags(Qt.FramelessWindowHint)
 
         # --- App State ---
         self.app_state = STATE_HOME
@@ -114,6 +146,8 @@ class CollectionApp(QMainWindow):
         self.processing_thread = None
         self.training_thread = None # <-- NEW
         self.recognition_worker = None # <-- NEW
+        self.active_dataset = "Default"
+        self.is_dark_theme = False
         
         # --- Professional Video Recorder ---
         self.video_recorder = VideoRecorder()
@@ -128,18 +162,41 @@ class CollectionApp(QMainWindow):
     def initUI(self):
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
-        self.main_layout = QHBoxLayout(self.central_widget)
+        self.main_layout = QVBoxLayout(self.central_widget)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)
 
+        # --- Top Menu Bar ---
+        self.top_menu_bar = create_top_menubar(self)
+        self.main_layout.addWidget(self.top_menu_bar)
+
+        # Main content area with a resizable QSplitter
+        self.content_splitter = QSplitter(Qt.Horizontal)
+        # Give the splitter an ID prefix to target it in stylesheets easily if needed
+        self.content_splitter.setObjectName("ContentSplitter")
+        self.main_layout.addWidget(self.content_splitter)
+
         # Create UI from definitions
         self.sidebar = create_sidebar(self)
-        self.main_layout.addWidget(self.sidebar)
-
+        
+        # Connect the hamburger toggle button (which is in the top_menu_bar)
+        if hasattr(self, 'sidebar_toggle_btn'):
+            try:
+                self.sidebar_toggle_btn.clicked.disconnect()
+            except TypeError:
+                pass
+            self.sidebar_toggle_btn.clicked.connect(self.toggle_sidebar)
+        
         self.main_content = QWidget()
         self.main_content.setObjectName("MainContent")
         self.main_content_layout = QVBoxLayout(self.main_content)
-        self.main_layout.addWidget(self.main_content, 1)
+        
+        # Add widgets to the splitter
+        self.content_splitter.addWidget(self.sidebar)
+        self.content_splitter.addWidget(self.main_content)
+        
+        # Set initial sizes for the sidebar and main content
+        self.content_splitter.setSizes([300, 980])
 
         self.stacked_widget = QStackedWidget()
         self.main_content_layout.addWidget(self.stacked_widget)
@@ -160,11 +217,14 @@ class CollectionApp(QMainWindow):
 
         # Connect signals
         self.rec_time_spin.valueChanged.connect(self.update_record_time)
+        self.content_splitter.splitterMoved.connect(self.on_splitter_moved)
         
         # Connect recognition signals
         self.recognition_back_btn.clicked.connect(self.go_to_home)
         self.recognition_start_btn.clicked.connect(self.start_recognition)
         self.recognition_stop_btn.clicked.connect(self.stop_recognition)
+        self.sentence_backspace_btn.clicked.connect(self.sentence_backspace)
+        self.sentence_clear_btn.clicked.connect(self.sentence_clear)
         
         # Connect manage data signals
         self.manage_data_back_btn.clicked.connect(self.go_to_home)
@@ -179,25 +239,123 @@ class CollectionApp(QMainWindow):
 
     # --- UI Logic ---
     
+    def toggle_theme(self):
+        from PyQt5.QtWidgets import QApplication
+        self.is_dark_theme = not self.is_dark_theme
+        
+        stylesheet_file = "style_dark.qss" if self.is_dark_theme else "style.qss"
+        try:
+            with open(stylesheet_file, "r") as f:
+                stylesheet = f.read()
+                QApplication.instance().setStyleSheet(stylesheet)
+                
+            if self.is_dark_theme:
+                self.theme_toggle_btn.setText("☀️ Switch to Light Theme" if getattr(self, 'sidebar_content', None) and self.sidebar_content.isVisible() else "☀️")
+            else:
+                self.theme_toggle_btn.setText("🌙 Switch to Dark Theme" if getattr(self, 'sidebar_content', None) and self.sidebar_content.isVisible() else "🌙")
+        except Exception as e:
+            print(f"Failed to load {stylesheet_file}: {e}")
+
+    def reload_stylesheets(self):
+        """Hot-reload for the CSS stylesheets."""
+        from PyQt5.QtWidgets import QApplication
+        stylesheet_file = "style_dark.qss" if self.is_dark_theme else "style.qss"
+        try:
+            with open(stylesheet_file, "r") as f:
+                stylesheet = f.read()
+                QApplication.instance().setStyleSheet(stylesheet)
+            print(f"[DEV] Reloaded {stylesheet_file} successfully.")
+        except Exception as e:
+            print(f"[DEV] Failed to reload {stylesheet_file}: {e}")
+
+    def toggle_sidebar(self):
+        print("Toggling sidebar...")
+        is_expanded = self.sidebar_content.isVisible()
+        
+        if is_expanded:
+            self.sidebar_content.setVisible(False)
+            self.content_splitter.setSizes([60, 1220])
+            if self.is_dark_theme:
+                self.theme_toggle_btn.setText("☀️")
+            else:
+                self.theme_toggle_btn.setText("🌙")
+            self.train_model_button.setText("📈")
+            self.stop_session_button.setText("⏹️")
+        else:
+            self.sidebar_content.setVisible(True)
+            self.content_splitter.setSizes([300, 980])
+            if self.is_dark_theme:
+                self.theme_toggle_btn.setText("☀️ Switch to Light Theme")
+            else:
+                self.theme_toggle_btn.setText("🌙 Switch to Dark Theme")
+            self.train_model_button.setText("📈 Train New Model")
+            self.stop_session_button.setText("⏹️ STOP SESSION")
+            
+    def on_splitter_moved(self, pos, index):
+        if not self.sidebar_content.isVisible():
+            return
+        sidebar_width = self.sidebar.width()
+        if sidebar_width > 220:
+            self.rec_time_label.setText("Recording Time (s):")
+        else:
+            self.rec_time_label.setText("Rec. Time (s):")
+
     def update_record_time(self, value):
         self.current_record_seconds = value
         print(f"Record time updated to: {self.current_record_seconds}s")
     
     def load_existing_actions(self):
         self.action_list.clear()
+        self.dataset_name_input.clear()
+        self.model_select.blockSignals(True)
+        self.model_select.clear()
+        
         if not os.path.exists(DATA_PATH):
             os.makedirs(DATA_PATH)
         try:
-            actions = [d for d in os.listdir(DATA_PATH) if os.path.isdir(os.path.join(DATA_PATH, d))]
+            datasets = [d for d in os.listdir(DATA_PATH) if os.path.isdir(os.path.join(DATA_PATH, d))]
+            datasets.sort()
+            
+            if not datasets:
+                datasets = ["Default"]
+            
+            self.dataset_name_input.addItems(datasets)
+            self.model_select.addItems(datasets)
+            self.training_dataset_dropdown.clear()
+            self.training_dataset_dropdown.addItems(datasets)
+            
+            if self.active_dataset in datasets:
+                self.model_select.setCurrentText(self.active_dataset)
+                self.dataset_name_input.setCurrentText(self.active_dataset)
+            else:
+                self.active_dataset = datasets[0]
+                self.model_select.setCurrentText(self.active_dataset)
+                self.dataset_name_input.setCurrentText(self.active_dataset)
+                
+            dataset_path = os.path.join(DATA_PATH, self.active_dataset)
+            if not os.path.exists(dataset_path):
+                os.makedirs(dataset_path)
+                
+            actions = [d for d in os.listdir(dataset_path) if os.path.isdir(os.path.join(dataset_path, d))]
             actions.sort()
             action_items = []
             for action in actions:
-                vid_count = len([f for f in os.listdir(os.path.join(DATA_PATH, action)) if f.endswith(('.mp4', '.avi', '.mov', '.webm'))])
+                vid_count = len([f for f in os.listdir(os.path.join(dataset_path, action)) if f.endswith(('.mp4', '.avi', '.mov', '.webm'))])
                 action_items.append(f"{action} ({vid_count})")
             self.action_list.addItems(action_items)
+
+            # Populate the action name combo with existing action names
+            if hasattr(self, 'action_name_input'):
+                self.action_name_input.set_action_list(actions)
         except Exception as e:
             print(f"Error loading actions: {e}")
+        finally:
+            self.model_select.blockSignals(False)
             
+    def on_model_changed(self, index):
+        self.active_dataset = self.model_select.currentText()
+        self.load_existing_actions()
+
     def filter_actions(self, text):
         for i in range(self.action_list.count()):
             item = self.action_list.item(i)
@@ -205,7 +363,7 @@ class CollectionApp(QMainWindow):
 
     def on_action_clicked(self, item):
         action_name = item.text().split(' (')[0]
-        self.action_name_input.setText(action_name)
+        self.action_name_input.lineEdit().setText(action_name)
 
     # --- Navigation ---
     
@@ -243,18 +401,54 @@ class CollectionApp(QMainWindow):
         self.stacked_widget.setCurrentWidget(self.training_widget)
         
         self.training_log_display.clear()
-        self.training_log_display.append("--- Starting Model Training ---")
+        self.training_log_display.append("--- Prepare Model Training ---")
+        self.training_log_display.append("Select a dataset and click Start Training.")
+        
+        self.train_model_button.setDisabled(False) # Make sure it's enabled if we come from somewhere else
+        self.training_back_button.setDisabled(False)
+        self.start_training_btn.setDisabled(False)
+        
+    def start_training_process(self):
+        dataset_name = self.training_dataset_dropdown.currentText()
+        if not dataset_name:
+            QMessageBox.warning(self, "Error", "No dataset selected.")
+            return
+
+        self.training_log_display.append(f"\n--- Starting Model Training for Dataset: {dataset_name} ---")
         self.training_log_display.append(f"Using Python: {sys.executable}")
         self.training_log_display.append("This may take several minutes...")
         
         self.train_model_button.setDisabled(True)
         self.training_back_button.setDisabled(True)
+        self.start_training_btn.setDisabled(True)
+        self.stop_training_btn.setDisabled(False)
+        
+        self.loading_progress_bar.setValue(0)
+        self.training_progress_bar.setValue(0)
+        self.training_chart_label.setText("Training in progress...")
+        self.training_chart_label.clear()
 
-        # Start the thread
-        self.training_thread = TrainingThread()
+        # Start the thread with the dataset name
+        self.training_thread = TrainingThread(dataset_name)
         self.training_thread.log_update.connect(self.append_training_log)
+        self.training_thread.load_progress_update.connect(self.update_loading_progress)
+        self.training_thread.epoch_update.connect(self.update_epoch_progress)
         self.training_thread.finished.connect(self.on_training_finished)
         self.training_thread.start()
+
+    def stop_training_process(self):
+        if self.training_thread and self.training_thread.isRunning():
+            self.stop_training_btn.setDisabled(True)
+            self.append_training_log("\n[UI] Requesting graceful stop. The model will save after the current epoch...")
+            self.training_thread.request_graceful_stop()
+
+    def update_loading_progress(self, current, total):
+        self.loading_progress_bar.setRange(0, total)
+        self.loading_progress_bar.setValue(current)
+
+    def update_epoch_progress(self, current, total):
+        self.training_progress_bar.setRange(0, total)
+        self.training_progress_bar.setValue(current)
 
     def append_training_log(self, text):
         """Appends text to the training log and auto-scrolls."""
@@ -268,16 +462,36 @@ class CollectionApp(QMainWindow):
         self.append_training_log("\n--- TRAINING COMPLETE ---")
         self.train_model_button.setDisabled(False)
         self.training_back_button.setDisabled(False)
-        self.set_state(STATE_HOME) # Or wherever you want to be
+        self.start_training_btn.setDisabled(False)
+        self.stop_training_btn.setDisabled(True)
+        
+        # Load the chart if it exists
+        dataset_name = self.training_dataset_dropdown.currentText()
+        chart_path = os.path.join('model report', dataset_name, 'training_history.png')
+        if os.path.exists(chart_path):
+            pixmap = QPixmap(chart_path)
+            self.training_chart_label.setPixmap(pixmap.scaled(self.training_chart_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        else:
+            self.training_chart_label.setText("Chart not available.")
+            
         QMessageBox.information(self, "Training Complete", "The model training process has finished.")
 
     # --- Recognition Control Methods ---
     
     def start_recognition(self):
         """Start real-time recognition"""
-        self.recognition_worker = RecognitionWorker()
+        # Reset sentence when starting a new session
+        self._sentence_words = []
+        self.sentence_label.setText("(sentence will appear here)")
+
+        # Use stored OS index from dropdown userData (avoids virtual cam confusion)
+        cam_index = self.cam_select.currentData()
+        if cam_index is None:
+            cam_index = self.cam_select.currentIndex()
+        self.recognition_worker = RecognitionWorker(cam_index, self.active_dataset)
         self.recognition_worker.frame_ready.connect(self.update_recognition_frame)
         self.recognition_worker.prediction_ready.connect(self.update_prediction)
+        self.recognition_worker.word_committed.connect(self.on_word_committed)
         self.recognition_worker.status_update.connect(self.update_recognition_status)
         self.recognition_worker.error_occurred.connect(self.show_recognition_error)
         
@@ -301,13 +515,35 @@ class CollectionApp(QMainWindow):
         self.recognition_prediction_label.setText("Ready to recognize...")
         self.recognition_confidence_label.setText("")
     
+    def on_word_committed(self, word):
+        """Called when recognition_logic commits a confirmed word."""
+        if not hasattr(self, '_sentence_words'):
+            self._sentence_words = []
+        self._sentence_words.append(word)
+        self._refresh_sentence_display()
+
+    def _refresh_sentence_display(self):
+        if not hasattr(self, '_sentence_words') or not self._sentence_words:
+            self.sentence_label.setText("(sentence will appear here)")
+        else:
+            self.sentence_label.setText(" ".join(self._sentence_words))
+
+    def sentence_backspace(self):
+        """Remove the last committed word."""
+        if hasattr(self, '_sentence_words') and self._sentence_words:
+            self._sentence_words.pop()
+            self._refresh_sentence_display()
+
+    def sentence_clear(self):
+        """Clear the entire sentence."""
+        self._sentence_words = []
+        self._refresh_sentence_display()
+
     def update_recognition_frame(self, qt_image):
         """Update video frame display"""
         pixmap = QPixmap.fromImage(qt_image)
-        self.recognition_video_label.setPixmap(
-            pixmap.scaled(self.recognition_video_label.size(), 
-                         Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        )
+        # Simply set the raw pixmap matching camera resolution
+        self.recognition_video_label.setPixmap(pixmap)
     
     def update_prediction(self, action, confidence):
         """Update prediction display"""
@@ -337,15 +573,19 @@ class CollectionApp(QMainWindow):
     # --- Session Logic ---
 
     def start_session(self):
-        self.action_name = self.action_name_input.text().strip()
+        dataset_name = self.dataset_name_input.currentText().strip()
+        if not dataset_name:
+            dataset_name = "Default"
+            
+        self.action_name = self.action_name_input.currentText().strip()
         self.num_videos = self.num_videos_input.value()
         
         if not self.action_name:
             QMessageBox.warning(self, "Error", "Please enter an action name.")
             return
             
-        self.action_video_dir = os.path.join(DATA_PATH, self.action_name)
-        self.action_landmark_dir = os.path.join(OUTPUT_PATH, self.action_name)
+        self.action_video_dir = os.path.join(DATA_PATH, dataset_name, self.action_name)
+        self.action_landmark_dir = os.path.join(OUTPUT_PATH, dataset_name, self.action_name)
         os.makedirs(self.action_video_dir, exist_ok=True)
         os.makedirs(self.action_landmark_dir, exist_ok=True)
         
@@ -365,8 +605,14 @@ class CollectionApp(QMainWindow):
         self.action_search.setDisabled(True)
         self.train_model_button.setDisabled(True) # Disable training during collection
 
-        cam_index = self.cam_select.currentIndex()
-        self.cap = cv2.VideoCapture(cam_index)
+        # Use stored OS index from dropdown userData (avoids virtual cam confusion)
+        cam_index = self.cam_select.currentData()
+        if cam_index is None:
+            cam_index = self.cam_select.currentIndex()
+        self.cap = cv2.VideoCapture(cam_index, cv2.CAP_DSHOW)
+        if not self.cap.isOpened():
+            self.cap = cv2.VideoCapture(cam_index)
+            
         if not self.cap.isOpened():
             QMessageBox.critical(self, "Camera Error", f"Could not open webcam {cam_index}.")
             return
@@ -425,23 +671,23 @@ class CollectionApp(QMainWindow):
             self.center_text_label.setText(f"Batch {batch_num}. Ready for video {self.current_video_num}.")
             self.center_text_label.setObjectName("LabelBigOverlay")
             self.center_text_label.setVisible(True)
-            self.start_batch_button.setText("START BATCH (S)")
+            self.start_batch_button.setText("▶  START BATCH  (S)")
             self.start_batch_button.setVisible(True)
-            self.status_text_label.setText(f"Ready for batch. Press 'S' to start.")
+            self.status_text_label.setText(f"⬤  Batch {batch_num} — Ready. Press S to start.")
             
         elif new_state == STATE_BATCH_COUNTDOWN:
-            self.status_text_label.setText("Get ready...")
+            self.status_text_label.setText("⬤  Get ready...")
             self.center_text_label.setObjectName("LabelCountdown")
             self.start_countdown(5, STATE_PAUSE_COUNTDOWN)
             
         elif new_state == STATE_PAUSE_COUNTDOWN:
-            self.status_text_label.setText(f"Starting video {self.current_video_num}...")
+            self.status_text_label.setText(f"⬤  Starting video {self.current_video_num}...")
             self.center_text_label.setObjectName("LabelCountdown")
             self.start_countdown(2, STATE_RECORDING)
             
         elif new_state == STATE_RECORDING:
             self.recording_label.setVisible(True)
-            self.status_text_label.setText(f"Recording video {self.current_video_num}...")
+            self.status_text_label.setText(f"🔴  Recording video {self.current_video_num}...")
             self.record_start_time = time.time()
             self.start_professional_recording()
 
@@ -449,11 +695,11 @@ class CollectionApp(QMainWindow):
             self.center_text_label.setText("Processing...")
             self.center_text_label.setObjectName("LabelProcessing")
             self.center_text_label.setVisible(True)
-            self.status_text_label.setText("Processing landmarks...")
+            self.status_text_label.setText("⚙  Processing landmarks...")
             self.start_processing()
             
         elif new_state == STATE_SESSION_DONE:
-            self.status_text_label.setText("Session Complete!")
+            self.status_text_label.setText("✅  Session Complete!")
             QMessageBox.information(self, "Success", "Data collection and processing complete!")
             self.stop_session()
 
@@ -555,7 +801,8 @@ class CollectionApp(QMainWindow):
         
         if self.app_state == STATE_RECORDING:
             elapsed = time.time() - self.record_start_time
-            cv2.putText(image, f"0:0{int(elapsed)+1}", (150, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2, cv2.LINE_AA)
+            remaining = max(0, self.current_record_seconds - elapsed)
+            cv2.putText(image, f"Recording: {remaining:.1f}s left", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
             
             # Check if recording duration completed
             if elapsed >= self.current_record_seconds:
@@ -574,9 +821,16 @@ class CollectionApp(QMainWindow):
         rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb_image.shape
         bytes_per_line = ch * w
-        convert_to_Qt_format = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format_RGB888)
-        p = convert_to_Qt_format.scaled(self.video_feed_label.width(), self.video_feed_label.height(), Qt.KeepAspectRatio)
-        return QPixmap.fromImage(p)
+        qt_format = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format_RGB888)
+        pixmap = QPixmap.fromImage(qt_format)
+        # Scale to 85% of the label — large but not edge-to-edge
+        label_w = self.video_feed_label.width()
+        label_h = self.video_feed_label.height()
+        if label_w > 0 and label_h > 0:
+            target_w = int(label_w * 0.85)
+            target_h = int(label_h * 0.85)
+            pixmap = pixmap.scaled(target_w, target_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        return pixmap
 
     # --- Processing ---
 
@@ -604,6 +858,16 @@ class CollectionApp(QMainWindow):
 
     def keyPressEvent(self, event):
         key = event.key()
+        if key == Qt.Key_F5:
+            self.reload_stylesheets()
+            
+        if key == Qt.Key_Up:
+            if self.rec_time_spin.isEnabled():
+                self.rec_time_spin.stepUp()
+        elif key == Qt.Key_Down:
+            if self.rec_time_spin.isEnabled():
+                self.rec_time_spin.stepDown()
+                
         if key == Qt.Key_Q:
             if self.app_state > STATE_SETUP and self.app_state != STATE_TRAINING:
                 self.stop_session()
@@ -618,21 +882,22 @@ class CollectionApp(QMainWindow):
     def load_data_statistics(self):
         """Load and display data statistics"""
         try:
-            if not os.path.exists(DATA_PATH):
-                self.data_stats_label.setText("No data collected yet.")
+            dataset_path = os.path.join(DATA_PATH, self.active_dataset)
+            if not os.path.exists(dataset_path):
+                self.data_stats_label.setText(f"No data collected yet for dataset: {self.active_dataset}.")
                 self.manage_actions_list.clear()
                 return
             
-            actions = [d for d in os.listdir(DATA_PATH) 
-                      if os.path.isdir(os.path.join(DATA_PATH, d))]
+            actions = [d for d in os.listdir(dataset_path) 
+                      if os.path.isdir(os.path.join(dataset_path, d))]
             
             total_videos = 0
             total_processed = 0
             action_data = []
             
             for action in actions:
-                action_video_dir = os.path.join(DATA_PATH, action)
-                action_processed_dir = os.path.join(OUTPUT_PATH, action)
+                action_video_dir = os.path.join(dataset_path, action)
+                action_processed_dir = os.path.join(OUTPUT_PATH, self.active_dataset, action)
                 
                 video_count = len([f for f in os.listdir(action_video_dir) 
                                   if f.endswith(('.mp4', '.avi', '.mov', '.webm'))])
@@ -670,8 +935,8 @@ Total Processed: {total_processed}
         """Handle action selection in manage data page"""
         action_name = item.text().split('  |  ')[0]
         
-        action_video_dir = os.path.join(DATA_PATH, action_name)
-        action_processed_dir = os.path.join(OUTPUT_PATH, action_name)
+        action_video_dir = os.path.join(DATA_PATH, self.active_dataset, action_name)
+        action_processed_dir = os.path.join(OUTPUT_PATH, self.active_dataset, action_name)
         
         video_files = [f for f in os.listdir(action_video_dir) 
                       if f.endswith(('.mp4', '.avi', '.mov', '.webm'))]
@@ -697,7 +962,7 @@ Location: {action_video_dir}
     def view_action_videos(self):
         """Open file explorer to view action videos"""
         if hasattr(self, 'selected_action'):
-            action_video_dir = os.path.join(DATA_PATH, self.selected_action)
+            action_video_dir = os.path.join(DATA_PATH, self.active_dataset, self.selected_action)
             if os.path.exists(action_video_dir):
                 os.startfile(action_video_dir)
     
@@ -722,12 +987,12 @@ Location: {action_video_dir}
                 import shutil
                 
                 # Delete video folder
-                action_video_dir = os.path.join(DATA_PATH, self.selected_action)
+                action_video_dir = os.path.join(DATA_PATH, self.active_dataset, self.selected_action)
                 if os.path.exists(action_video_dir):
                     shutil.rmtree(action_video_dir)
                 
                 # Delete processed folder
-                action_processed_dir = os.path.join(OUTPUT_PATH, self.selected_action)
+                action_processed_dir = os.path.join(OUTPUT_PATH, self.active_dataset, self.selected_action)
                 if os.path.exists(action_processed_dir):
                     shutil.rmtree(action_processed_dir)
                 
@@ -746,17 +1011,18 @@ Location: {action_video_dir}
     def export_data_info(self):
         """Export dataset information to text file"""
         try:
-            if not os.path.exists(DATA_PATH):
-                QMessageBox.warning(self, "No Data", "No data to export.")
+            dataset_path = os.path.join(DATA_PATH, self.active_dataset)
+            if not os.path.exists(dataset_path):
+                QMessageBox.warning(self, "No Data", f"No data to export for dataset {self.active_dataset}.")
                 return
             
             import datetime
             
-            actions = [d for d in os.listdir(DATA_PATH) 
-                      if os.path.isdir(os.path.join(DATA_PATH, d))]
+            actions = [d for d in os.listdir(dataset_path) 
+                      if os.path.isdir(os.path.join(dataset_path, d))]
             
             export_text = f"""
-ISL Dataset Information
+ISL Dataset Information - {self.active_dataset}
 Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 {'='*50}
 
@@ -769,8 +1035,8 @@ ACTION DETAILS:
 """
             
             for action in sorted(actions):
-                action_video_dir = os.path.join(DATA_PATH, action)
-                action_processed_dir = os.path.join(OUTPUT_PATH, action)
+                action_video_dir = os.path.join(dataset_path, action)
+                action_processed_dir = os.path.join(OUTPUT_PATH, self.active_dataset, action)
                 
                 video_files = [f for f in os.listdir(action_video_dir) 
                               if f.endswith(('.mp4', '.avi', '.mov', '.webm'))]
@@ -848,6 +1114,25 @@ Action: {action}
             sys.exit()
     
     # --- END Data Management Methods ---
+
+    def show_about_us(self):
+        QMessageBox.information(
+            self, "About Us",
+            "Project ANWAYA\n\n"
+            "This application is a Personalised Customisable Sign Language to Text Converter. "
+            "Developed as a final year college project (B.Tech). Our goal is to bridge the "
+            "communication gap for the deaf and mute community by converting gestures to text in real-time."
+        )
+
+    def show_how_to_use(self):
+        QMessageBox.information(
+            self, "How to Use",
+            "1. Setup Collection: Create a dataset and record custom sign language gestures.\n"
+            "2. Train Model: Navigate to the training page and train the system on your dataset.\n"
+            "3. Real-Time Recognition: Start the camera on the recognition page to translate gestures into text instantly.\n"
+            "4. Manage Data: View, edit, and delete recorded gestures from your dataset.\n\n"
+            "Need more help? Check out our complete documentation."
+        )
 
     def closeEvent(self, event):
         # Clean up all threads
