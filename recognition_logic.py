@@ -235,28 +235,18 @@ class RecognitionWorker(QThread):
                 image, results = self.mediapipe_detection(frame, holistic)
                 self.draw_styled_landmarks(image, results)
 
-                # ── Motion/Hand Gate ──────────────────────────────────────────
-                # Only collect keypoints when the person is actually signing.
-                # Criteria: at least one hand landmark detected  OR
-                #           significant wrist movement compared to last frame.
+                # ── Hand Gate ────────────────────────────────────────────────
+                # Only collect keypoints and predict when at least one hand
+                # is visible. No hands → skip prediction entirely.
                 hands_visible = (results.left_hand_landmarks is not None or
                                  results.right_hand_landmarks is not None)
 
-                # Compute wrist movement from pose landmarks (L wrist=15, R wrist=16)
-                wrist_moved = False
-                if results.pose_landmarks:
-                    lm = results.pose_landmarks.landmark
-                    # Use left+right wrist normalised coords for motion delta
-                    curr_wrists = np.array([
-                        lm[15].x, lm[15].y,   # left wrist
-                        lm[16].x, lm[16].y    # right wrist
-                    ])
-                    if hasattr(self, '_prev_wrists'):
-                        delta = np.linalg.norm(curr_wrists - self._prev_wrists)
-                        wrist_moved = delta > 0.015   # ~1.5% of frame width
-                    self._prev_wrists = curr_wrists
+                # If hands just disappeared, flush the sequence so stale
+                # keyframes from the previous sign don't pollute the next one.
+                if not hands_visible and self.sequence:
+                    self.sequence = []
 
-                is_active = hands_visible or wrist_moved
+                is_active = hands_visible
 
                 if is_active:
                     self._last_active_time = time.monotonic()

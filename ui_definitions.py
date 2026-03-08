@@ -447,6 +447,20 @@ def create_setup_widget(main_window):
     main_window.num_videos_input.setValue(50)
     main_window.num_videos_input.setFont(QFont('Roboto', 18))
     layout.addWidget(main_window.num_videos_input)
+
+    lbl_start = QLabel("Start From (Video Number)")
+    lbl_start.setObjectName("SetupLabel")
+    layout.addWidget(lbl_start)
+    main_window.start_video_num_input = QSpinBox()
+    main_window.start_video_num_input.setRange(0, 9999)
+    main_window.start_video_num_input.setValue(0)
+    main_window.start_video_num_input.setFont(QFont('Roboto', 18))
+    layout.addWidget(main_window.start_video_num_input)
+    layout.addWidget(QLabel(
+        "Set to 0 to auto-detect the next available number.\n"
+        "E.g. if your friend recorded 0–9, set this to 10.",
+        objectName="LabelHelper"
+    ))
     layout.addStretch(1)
 
     setup_button_layout = QHBoxLayout()

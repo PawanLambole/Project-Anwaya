@@ -589,12 +589,19 @@ class CollectionApp(QMainWindow):
         os.makedirs(self.action_video_dir, exist_ok=True)
         os.makedirs(self.action_landmark_dir, exist_ok=True)
         
-        self.start_num = 0
-        while True:
-            video_file_exists = any(os.path.exists(os.path.join(self.action_video_dir, f"{self.start_num}{ext}")) for ext in ['.mp4', '.webm', '.avi', '.mov'])
-            if not video_file_exists: break
-            self.start_num += 1
-        print(f"Starting video number will be: {self.start_num}")
+        user_start = self.start_video_num_input.value()
+        if user_start == 0:
+            # Auto-detect: find the next available number
+            self.start_num = 0
+            while True:
+                video_file_exists = any(os.path.exists(os.path.join(self.action_video_dir, f"{self.start_num}{ext}")) for ext in ['.mp4', '.webm', '.avi', '.mov'])
+                if not video_file_exists: break
+                self.start_num += 1
+            print(f"[Auto-detect] Starting video number: {self.start_num}")
+        else:
+            # Use user-defined start number
+            self.start_num = user_start
+            print(f"[Manual] Starting video number: {self.start_num}")
         self.current_video_num = self.start_num
         
         self.session_action_label.setText(f"Action: {self.action_name}")
