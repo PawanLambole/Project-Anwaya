@@ -5,9 +5,14 @@ import time
 import sys
 import subprocess # <-- NEW: For running external script
 import re # <-- NEW: For parsing training logs
-from PyQt5.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QStackedWidget, QMessageBox, QSplitter, QLabel)
-from PyQt5.QtGui import QImage, QPixmap
-from PyQt5.QtCore import QTimer, Qt, QThread, pyqtSignal # <-- NEW: QThread, pyqtSignal
+import ctypes
+from ctypes.wintypes import MSG
+import win32con
+import win32api
+import win32gui
+from PyQt5.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QStackedWidget, QMessageBox, QSplitter, QLabel, QShortcut)
+from PyQt5.QtGui import QImage, QPixmap, QKeySequence
+from PyQt5.QtCore import QTimer, Qt, QThread, pyqtSignal, QPoint
 
 # --- Import from our local files ---
 from ui_definitions import (
@@ -123,7 +128,10 @@ class CollectionApp(QMainWindow):
         self.setWindowTitle("Anvaya")
         self.setGeometry(100, 100, 1280, 720)
         self.setObjectName("MainWindow")
-        self.setWindowFlags(Qt.FramelessWindowHint)
+        
+        # Start frameless, but we'll add standard window styles back in showEvent
+        # so Windows 11 snap features work natively.
+        self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
 
         # --- App State ---
         self.app_state = STATE_HOME
@@ -267,6 +275,71 @@ class CollectionApp(QMainWindow):
             print(f"[DEV] Reloaded {stylesheet_file} successfully.")
         except Exception as e:
             print(f"[DEV] Failed to reload {stylesheet_file}: {e}")
+
+    # --- Native Event Hook for Snap Assit ---
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Add basic window flags purely to fool the OS into providing Snap Assist
+        try:
+            hwnd = int(self.winId())
+            style = win32gui.GetWindowLong(hwnd, win32con.GWL_STYLE)
+            style |= win32con.WS_THICKFRAME | win32con.WS_CAPTION | win32con.WS_MAXIMIZEBOX | win32con.WS_MINIMIZEBOX | win32con.WS_SYSMENU
+            win32gui.SetWindowLong(hwnd, win32con.GWL_STYLE, style)
+            win32gui.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 
+                                  win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | 
+                                  win32con.SWP_NOZORDER | win32con.SWP_FRAMECHANGED)
+        except Exception as e:
+            print(f"showEvent Windows hook failed: {e}")
+
+    def nativeEvent(self, eventType, message):
+        try:
+            msg = MSG.from_address(message.__int__())
+            if msg.message == win32con.WM_NCCALCSIZE:
+                # Remove the caption that we just added so it's a true frameless window
+                if msg.wParam:
+                    return True, 0
+            
+            elif msg.message == win32con.WM_NCHITTEST:
+                # Get current mouse coords from the OS
+                x = win32api.LOWORD(msg.lParam)
+                if x & 0x8000: x -= 0x10000
+                    
+                y = win32api.HIWORD(msg.lParam)
+                if y & 0x8000: y -= 0x10000
+                
+                # Convert coords relative to our application
+                local_pos = self.mapFromGlobal(QPoint(x, y))
+                hx = local_pos.x()
+                hy = local_pos.y()
+                
+                bw = 8 # Border snapping width
+                
+                left = (hx < bw)
+                right = (hx > self.width() - bw)
+                top = (hy < bw)
+                bottom = (hy > self.height() - bw)
+                
+                if top and left: return True, win32con.HTTOPLEFT
+                elif top and right: return True, win32con.HTTOPRIGHT
+                elif bottom and left: return True, win32con.HTBOTTOMLEFT
+                elif bottom and right: return True, win32con.HTBOTTOMRIGHT
+                elif top: return True, win32con.HTTOP
+                elif bottom: return True, win32con.HTBOTTOM
+                elif left: return True, win32con.HTLEFT
+                elif right: return True, win32con.HTRIGHT
+                
+                # Titlebar drag region (custom title bar area -> TopMenuBar)
+                # Treat the top 50 pixels specifically as dragging
+                if hy < 50:
+                    # Ignore dragging if the sidebar toggle btn (left edge) or control buttons (right edge) is clicked
+                    if hx > 60 and hx < self.width() - 150:
+                        return True, win32con.HTCAPTION
+                        
+                return True, win32con.HTCLIENT
+        except Exception as e:
+            pass # Failsafe against incorrect hook resolution
+            
+        return super().nativeEvent(eventType, message)
 
     def toggle_sidebar(self):
         print("Toggling sidebar...")

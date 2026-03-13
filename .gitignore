@@ -36,6 +36,7 @@ Thumbs.db
 
 # Training outputs
 *.png
+!bg.png
 training_history.png
 classification_report.txt
 training_summary.txt
