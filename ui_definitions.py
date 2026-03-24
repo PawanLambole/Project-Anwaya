@@ -2,10 +2,10 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
     QLineEdit, QSpinBox, QListWidget, QFrame, QProgressBar, 
     QSizePolicy, QComboBox, QGridLayout, QSpacerItem, QTextEdit,
-    QCompleter
+    QCompleter, QScrollArea, QListView
 )
 from PyQt5.QtGui import QFont
-from PyQt5.QtCore import Qt, QTimer, QStringListModel
+from PyQt5.QtCore import Qt, QTimer, QStringListModel, pyqtSignal
 
 
 def _ui_font(point_size: int, weight: int = QFont.Normal) -> QFont:
@@ -13,6 +13,42 @@ def _ui_font(point_size: int, weight: int = QFont.Normal) -> QFont:
     font.setPointSize(point_size)
     font.setWeight(weight)
     return font
+
+_COMBO_VIEW_STYLE = """
+QListView {
+    background-color: #FFFFFF;
+    color: #111827;
+    border: 1px solid #D1D5DB;
+    border-radius: 4px;
+    outline: none;
+}
+QListView::item {
+    min-height: 36px;
+    padding: 4px 10px;
+}
+QListView::item:hover {
+    background-color: #FFF7ED;
+    color: #EA580C;
+}
+QListView::item:selected {
+    background-color: #EA580C;
+    color: #FFFFFF;
+}
+"""
+
+def _make_combo(items=None, editable=False) -> QComboBox:
+    """Create a QComboBox with an explicitly-styled QListView popup.
+    This forces Qt to use its own rendering engine instead of Windows
+    native controls, preventing the black-background issue."""
+    cb = QComboBox()
+    view = QListView()
+    view.setStyleSheet(_COMBO_VIEW_STYLE)
+    cb.setView(view)
+    if editable:
+        cb.setEditable(True)
+    if items:
+        cb.addItems(items)
+    return cb
 
 
 class ActionComboBox(QComboBox):
@@ -23,9 +59,15 @@ class ActionComboBox(QComboBox):
     overrides inputMethodEvent so that after IME commits text, a short QTimer fires
     and shows the matching suggestions in the dropdown popup.
     """
+    # Emitted when the user finishes entering / selecting an action name
+    action_confirmed = pyqtSignal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setEditable(True)
+        view = QListView()
+        view.setStyleSheet(_COMBO_VIEW_STYLE)
+        self.setView(view)
         self.setInsertPolicy(QComboBox.NoInsert)
         # Our completer
         self._completer = QCompleter(self)
@@ -33,12 +75,14 @@ class ActionComboBox(QComboBox):
         self._completer.setFilterMode(Qt.MatchContains)
         self._completer.setCompletionMode(QCompleter.PopupCompletion)
         self.setCompleter(self._completer)
+        # When completer selects an item, emit action_confirmed
+        self._completer.activated.connect(self._on_action_confirmed)
         # Make the popup readable — large font + comfortable row height
         popup = self._completer.popup()
-        popup.setFont(_ui_font(22))
+        popup.setFont(_ui_font(16))
         popup.setStyleSheet("""
             QListView {
-                font-size: 22px;
+                font-size: 18px;
                 padding: 4px;
             }
             QListView::item {
@@ -57,6 +101,9 @@ class ActionComboBox(QComboBox):
         self._ime_timer.timeout.connect(self._show_suggestions)
         # Also hook textEdited (for normal keyboard) to show suggestions
         self.lineEdit().textEdited.connect(self._on_text_edited)
+        # Emit action_confirmed when user presses Enter or clicks dropdown item
+        self.lineEdit().editingFinished.connect(lambda: self._on_action_confirmed(self.lineEdit().text()))
+        self.activated[str].connect(self._on_action_confirmed)
 
     def set_action_list(self, actions):
         """Populate both the dropdown items and the completer model."""
@@ -79,6 +126,12 @@ class ActionComboBox(QComboBox):
         """Called on normal (non-IME) edits — show suggestions immediately."""
         self._ime_timer.stop()
         self._show_suggestions()
+
+    def _on_action_confirmed(self, text):
+        """Emit action_confirmed whenever the user commits an action name."""
+        action = text.strip() if text else self.lineEdit().text().strip()
+        if action:
+            self.action_confirmed.emit(action)
 
     def _show_suggestions(self):
         """Force the completer to update and show the popup."""
@@ -150,19 +203,19 @@ class CustomTitleBar(QFrame):
         self.controls_layout = QHBoxLayout()
         self.controls_layout.setSpacing(5)
         
-        self.minimize_btn = QPushButton("—")
+        self.minimize_btn = QPushButton("\uE921")
         self.minimize_btn.setObjectName("TitleBarControlBtn")
         self.minimize_btn.setFixedSize(30, 30)
         self.minimize_btn.clicked.connect(self.parent.showMinimized)
         self.controls_layout.addWidget(self.minimize_btn)
         
-        self.maximize_btn = QPushButton("□")
+        self.maximize_btn = QPushButton("\uE922")
         self.maximize_btn.setObjectName("TitleBarControlBtn")
         self.maximize_btn.setFixedSize(30, 30)
         self.maximize_btn.clicked.connect(self.toggle_maximize)
         self.controls_layout.addWidget(self.maximize_btn)
         
-        self.close_btn = QPushButton("✕")
+        self.close_btn = QPushButton("\uE8BB")
         self.close_btn.setObjectName("TitleBarCloseBtn")
         self.close_btn.setFixedSize(30, 30)
         self.close_btn.clicked.connect(self.parent.close)
@@ -175,10 +228,10 @@ class CustomTitleBar(QFrame):
     def toggle_maximize(self):
         if self.parent.isMaximized():
             self.parent.showNormal()
-            self.maximize_btn.setText("□")
+            self.maximize_btn.setText("\uE922")
         else:
             self.parent.showMaximized()
-            self.maximize_btn.setText("❐")
+            self.maximize_btn.setText("\uE923")
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -212,6 +265,7 @@ def create_sidebar(main_window):
 
     # --- Main Content Widget (Hidable) ---
     main_window.sidebar_content = QWidget()
+    main_window.sidebar_content.setObjectName("SidebarContent")
     content_layout = QVBoxLayout(main_window.sidebar_content)
     content_layout.setContentsMargins(0, 0, 0, 0)
     content_layout.setSpacing(10)
@@ -223,7 +277,8 @@ def create_sidebar(main_window):
     content_layout.addWidget(main_window.action_search)
 
     main_window.action_list = QListWidget()
-    main_window.action_list.setMinimumHeight(150)
+    main_window.action_list.setMinimumHeight(150) # Ensure it has a decent minimum size
+    main_window.action_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
     main_window.action_list.itemClicked.connect(main_window.on_action_clicked)
     content_layout.addWidget(main_window.action_list, 1)
 
@@ -284,16 +339,22 @@ def create_sidebar(main_window):
     rec_layout.addWidget(main_window.rec_time_spin)
     content_layout.addLayout(rec_layout)
 
-    sidebar_layout.addWidget(main_window.sidebar_content, 1)
+    # Wrap sidebar_content in a scroll area so it never gets clipped
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setWidget(main_window.sidebar_content)
+    scroll.setFrameShape(QFrame.NoFrame)
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+    sidebar_layout.addWidget(scroll, 1)
 
-    # --- Buttons (These stay visible but change text in icon mode) ---
+    # --- Buttons (always visible at the bottom, no addStretch competition) ---
     main_window.theme_toggle_btn = QPushButton("🌙 Switch to Dark Theme")
     main_window.theme_toggle_btn.setObjectName("ButtonGray")
     main_window.theme_toggle_btn.clicked.connect(main_window.toggle_theme)
     sidebar_layout.addWidget(main_window.theme_toggle_btn)
 
-    sidebar_layout.addStretch()
-    
+
     main_window.train_model_button = QPushButton("📈 Train New Model")
     main_window.train_model_button.setObjectName("ButtonTrain")
     main_window.train_model_button.clicked.connect(main_window.go_to_training)
@@ -415,24 +476,37 @@ def create_home_widget(main_window):
 def create_setup_widget(main_window):
     widget = QWidget()
     widget.setObjectName("SetupWidget")
-    layout = QVBoxLayout(widget)
-    layout.setAlignment(Qt.AlignCenter)
+    
+    main_layout = QVBoxLayout(widget)
+    main_layout.setContentsMargins(0, 0, 0, 0)
+    
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QFrame.NoFrame)
+    scroll.setStyleSheet("background-color: transparent;")
+    
+    content_widget = QWidget()
+    content_widget.setObjectName("SetupContentWidget")
+    
+    layout = QVBoxLayout(content_widget)
+    layout.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
     layout.setSpacing(15)
     layout.setContentsMargins(40, 30, 40, 30)
 
     title = QLabel("Setup New Collection Session")
-    title.setFont(_ui_font(24, QFont.Bold))
+    title.setFont(_ui_font(20, QFont.Bold))
     title.setAlignment(Qt.AlignCenter)
     layout.addWidget(title)
-    layout.addStretch(1)
+    
+    main_layout.addWidget(scroll)
+    scroll.setWidget(content_widget)
 
     lbl_dataset = QLabel("Dataset Name")
     lbl_dataset.setObjectName("SetupLabel")
     layout.addWidget(lbl_dataset)
-    main_window.dataset_name_input = QComboBox()
-    main_window.dataset_name_input.setEditable(True)
+    main_window.dataset_name_input = _make_combo(editable=True)
     main_window.dataset_name_input.setPlaceholderText("e.g., Default")
-    main_window.dataset_name_input.setFont(_ui_font(18))
+    main_window.dataset_name_input.setFont(_ui_font(16))
     layout.addWidget(main_window.dataset_name_input)
     layout.addWidget(QLabel("(Select from list or type new)", objectName="LabelHelper"))
 
@@ -442,48 +516,80 @@ def create_setup_widget(main_window):
     main_window.action_name_input = ActionComboBox()
     main_window.action_name_input.setPlaceholderText("e.g., आभार")
     main_window.action_name_input.lineEdit().setPlaceholderText("e.g., आभार")
-    main_window.action_name_input.setFont(_ui_font(18))
+    main_window.action_name_input.setFont(_ui_font(16))
     layout.addWidget(main_window.action_name_input)
     layout.addWidget(QLabel("(Type action name — suggestions appear after typing)", objectName="LabelHelper"))
 
-    lbl_connected_model = QLabel("Connect Action to Model (Optional)")
-    lbl_connected_model.setObjectName("SetupLabel")
-    layout.addWidget(lbl_connected_model)
-    main_window.connected_model_input = QComboBox()
-    main_window.connected_model_input.addItem("None")
-    main_window.connected_model_input.setFont(_ui_font(18))
-    layout.addWidget(main_window.connected_model_input)
-    layout.addWidget(QLabel("(When this action is recognized, it will switch to this model)", objectName="LabelHelper"))
-
+    # ── Horizontal Layout for Video Count & Start Index ──
+    vid_layout = QHBoxLayout()
+    
+    # Left: Number of Videos
+    vid_left = QVBoxLayout()
     lbl_num = QLabel("Number of Videos to Record")
     lbl_num.setObjectName("SetupLabel")
-    layout.addWidget(lbl_num)
+    vid_left.addWidget(lbl_num)
     main_window.num_videos_input = QSpinBox()
     main_window.num_videos_input.setRange(1, 1000)
     main_window.num_videos_input.setValue(50)
-    main_window.num_videos_input.setFont(_ui_font(18))
-    layout.addWidget(main_window.num_videos_input)
-
+    main_window.num_videos_input.setFont(_ui_font(16))
+    vid_left.addWidget(main_window.num_videos_input)
+    vid_left.addWidget(QLabel("", objectName="LabelHelper")) # Spacer for alignment
+    vid_layout.addLayout(vid_left)
+    
+    # Right: Start From
+    vid_right = QVBoxLayout()
     lbl_start = QLabel("Start From (Video Number)")
     lbl_start.setObjectName("SetupLabel")
-    layout.addWidget(lbl_start)
+    vid_right.addWidget(lbl_start)
     main_window.start_video_num_input = QSpinBox()
     main_window.start_video_num_input.setRange(0, 9999)
     main_window.start_video_num_input.setValue(0)
-    main_window.start_video_num_input.setFont(_ui_font(18))
-    layout.addWidget(main_window.start_video_num_input)
-    layout.addWidget(QLabel(
-        "Set to 0 to auto-detect the next available number.\n"
-        "E.g. if your friend recorded 0–9, set this to 10.",
-        objectName="LabelHelper"
-    ))
-    layout.addStretch(1)
+    main_window.start_video_num_input.setFont(_ui_font(16))
+    vid_right.addWidget(main_window.start_video_num_input)
+    vid_right.addWidget(QLabel("Set 0 to auto-detect next available", objectName="LabelHelper"))
+    vid_layout.addLayout(vid_right)
+    
+    layout.addLayout(vid_layout)
+
+    # ── Horizontal Layout for Connection & Termination ──
+    options_layout = QHBoxLayout()
+    
+    # Left: Connected Model
+    opt_left = QVBoxLayout()
+    lbl_connected_model = QLabel("Connect Action to Model (Optional)")
+    lbl_connected_model.setObjectName("SetupLabel")
+    opt_left.addWidget(lbl_connected_model)
+    main_window.connected_model_input = _make_combo(items=["None"])
+    main_window.connected_model_input.setFont(_ui_font(16))
+    opt_left.addWidget(main_window.connected_model_input)
+    opt_left.addWidget(QLabel("(Switches to this model when action recognized)", objectName="LabelHelper"))
+    options_layout.addLayout(opt_left)
+    
+    # Right: Terminator
+    opt_right = QVBoxLayout()
+    lbl_termination = QLabel("Is this a Terminator? (Optional)")
+    lbl_termination.setObjectName("SetupLabel")
+    opt_right.addWidget(lbl_termination)
+    main_window.termination_input = _make_combo(items=["No", "Yes"])
+    main_window.termination_input.setFont(_ui_font(16))
+    opt_right.addWidget(main_window.termination_input)
+    opt_right.addWidget(QLabel("(If Yes, ends sentence with '.')", objectName="LabelHelper"))
+    options_layout.addLayout(opt_right)
+    
+    layout.addLayout(options_layout)
 
     setup_button_layout = QHBoxLayout()
     main_window.back_button = QPushButton("Back to Home")
     main_window.back_button.setObjectName("ButtonGray")
     main_window.back_button.clicked.connect(main_window.go_to_home)
     setup_button_layout.addWidget(main_window.back_button)
+
+    main_window.save_connection_btn = QPushButton("Save Connection Only")
+    main_window.save_connection_btn.setFont(_ui_font(14, QFont.Bold))
+    main_window.save_connection_btn.setMinimumHeight(50)
+    main_window.save_connection_btn.setObjectName("ButtonPurple")
+    main_window.save_connection_btn.clicked.connect(main_window.save_connection_only)
+    setup_button_layout.addWidget(main_window.save_connection_btn, 1)
 
     main_window.start_session_button = QPushButton("START SESSION")
     main_window.start_session_button.setFont(_ui_font(18, QFont.Bold))
@@ -492,7 +598,6 @@ def create_setup_widget(main_window):
     setup_button_layout.addWidget(main_window.start_session_button, 1)
     
     layout.addLayout(setup_button_layout)
-    layout.addStretch(2)
     return widget
 
 def create_recognition_widget(main_window):
@@ -524,6 +629,10 @@ def create_recognition_widget(main_window):
 
     layout.addLayout(header_layout)
 
+    # ── Main Video and Completed Sentences Layout ───────────────────────────
+    video_and_sentences_layout = QHBoxLayout()
+    video_and_sentences_layout.setSpacing(10)
+
     # ── Video (fills all remaining space) ───────────────────────────────────
     main_window.recognition_video_label = QLabel()
     main_window.recognition_video_label.setObjectName("videoLabel")
@@ -533,7 +642,26 @@ def create_recognition_widget(main_window):
     main_window.recognition_video_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
     main_window.recognition_video_label.setStyleSheet("QLabel#videoLabel { background-color: transparent; }")
     main_window.recognition_video_label.setText("Camera Stopped")
-    layout.addWidget(main_window.recognition_video_label, 1)   # stretch=1 → takes all spare height
+    video_and_sentences_layout.addWidget(main_window.recognition_video_label, 4)   # stretch=4 gives video more space
+
+    # ── Completed Sentences Panel ───────────────────────────────────────────
+    main_window.completed_sentences_text = QTextEdit()
+    main_window.completed_sentences_text.setObjectName("CompletedSentences")
+    main_window.completed_sentences_text.setReadOnly(True)
+    main_window.completed_sentences_text.setStyleSheet("""
+        QTextEdit#CompletedSentences {
+            background-color: #F8FAFC;
+            border: 1px solid #E2E8F0;
+            border-radius: 8px;
+            padding: 10px;
+            font-size: 18px;
+            color: #1E293B;
+        }
+    """)
+    main_window.completed_sentences_text.setPlaceholderText("Completed sentences will appear here...")
+    video_and_sentences_layout.addWidget(main_window.completed_sentences_text, 1) # stretch=1 for text area
+
+    layout.addLayout(video_and_sentences_layout, 1) # The QHBoxLayout takes all spare height
 
     # ── Prediction banner (compact, fixed height) ───────────────────────────
     prediction_banner = QWidget()
@@ -760,12 +888,13 @@ def create_collection_widget(main_window):
     widget = QWidget()
     layout = QGridLayout(widget)
     layout.setContentsMargins(0, 0, 0, 0)
+    layout.setRowStretch(0, 1)
+    layout.setColumnStretch(0, 1)
     
     main_window.video_feed_label = QLabel()
     main_window.video_feed_label.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
-    main_window.video_feed_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+    main_window.video_feed_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
     main_window.video_feed_label.setStyleSheet("background-color: transparent;")
-    layout.setContentsMargins(0, 12, 0, 0)
     layout.addWidget(main_window.video_feed_label, 0, 0)
     
     overlay_widget = QWidget()

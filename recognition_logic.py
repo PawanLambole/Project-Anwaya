@@ -16,7 +16,7 @@ class RecognitionWorker(QThread):
     """Worker thread for real-time ISL recognition"""
     frame_ready = pyqtSignal(QImage)
     prediction_ready = pyqtSignal(str, float)  # (action, confidence)
-    word_committed = pyqtSignal(str)            # emitted when a word is confirmed
+    word_committed = pyqtSignal(str, bool)      # emitted when a word is confirmed: (word, is_termination)
     status_update = pyqtSignal(str)
     error_occurred = pyqtSignal(str)
     
@@ -32,6 +32,7 @@ class RecognitionWorker(QThread):
         self.MAX_SEQUENCE_LENGTH = 30
         self.sequence = []
         self.threshold = 0.75          # minimum confidence to count
+        self.model_stack = []          # <-- NEW: Stack for returning to previous models
 
         # --- Word commit state ---
         self.CONSECUTIVE_NEEDED = 3    # 3 predictions = 90 frames total
@@ -57,10 +58,19 @@ class RecognitionWorker(QThread):
         config_path = f'model/{self.dataset_name}/action_configs.json'
         if os.path.exists(config_path):
             try:
-                with open(config_path, 'r') as f:
+                with open(config_path, 'r', encoding='utf-8') as f:
                     self.action_configs = json.load(f)
             except Exception as e:
                 print(f"Failed to load action_configs.json: {e}")
+                
+        self.termination_actions = []
+        term_config_path = f'model/{self.dataset_name}/termination_actions.json'
+        if os.path.exists(term_config_path):
+            try:
+                with open(term_config_path, 'r', encoding='utf-8') as f:
+                    self.termination_actions = json.load(f)
+            except Exception as e:
+                print(f"Failed to load termination_actions.json: {e}")
                 
         
         try:
@@ -272,7 +282,8 @@ class RecognitionWorker(QThread):
                     if self._candidate_word:
                         if no_hands_duration >= 4.0:
                             # 1s wait + 3s countdown finished -> COMMIT IT
-                            self.word_committed.emit(self._candidate_word)
+                            is_term = hasattr(self, 'termination_actions') and self._candidate_word in self.termination_actions
+                            self.word_committed.emit(self._candidate_word, is_term)
                             self.prediction_ready.emit(f"✅ Committed: {self._candidate_word}", 0.0)
                             
                             committed_word = self._candidate_word
@@ -288,9 +299,20 @@ class RecognitionWorker(QThread):
                             if hasattr(self, 'action_configs') and committed_word in self.action_configs:
                                 connected_model = self.action_configs[committed_word]
                                 self.status_update.emit(f"Switching to model: {connected_model}...")
+                                # Push current model to stack before switching
+                                self.model_stack.append(self.dataset_name)
                                 # Load new model and encoder
                                 if self.load_model_and_encoder(connected_model):
                                     self.status_update.emit(f"Recognition active ({connected_model})")
+                                continue # Skip the rest of this loop to start fresh
+                            
+                            # If no connected model, but we have a previous model in the stack
+                            elif getattr(self, 'model_stack', None):
+                                return_model = self.model_stack.pop()
+                                self.status_update.emit(f"Returning to previous model: {return_model}...")
+                                # Load previous model and encoder
+                                if self.load_model_and_encoder(return_model):
+                                    self.status_update.emit(f"Recognition active ({return_model})")
                                 continue # Skip the rest of this loop to start fresh
 
                             

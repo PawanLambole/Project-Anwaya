@@ -3,6 +3,7 @@ import numpy as np
 import os
 import time
 import sys
+import json
 import subprocess # <-- NEW: For running external script
 import re # <-- NEW: For parsing training logs
 import ctypes
@@ -126,6 +127,7 @@ class CollectionApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Anvaya")
+        # Geometry is set responsively in showEvent; use a sane placeholder
         self.setGeometry(100, 100, 1280, 720)
         self.setObjectName("MainWindow")
         
@@ -202,9 +204,10 @@ class CollectionApp(QMainWindow):
         # Add widgets to the splitter
         self.content_splitter.addWidget(self.sidebar)
         self.content_splitter.addWidget(self.main_content)
-        
-        # Set initial sizes for the sidebar and main content
-        self.content_splitter.setSizes([300, 980])
+
+        # Initial splitter proportion: sidebar 22%, main content 78%
+        # Will be recalculated after showEvent centers/resizes the window
+        self.content_splitter.setSizes([280, 1000])
 
         self.stacked_widget = QStackedWidget()
         self.main_content_layout.addWidget(self.stacked_widget)
@@ -242,6 +245,11 @@ class CollectionApp(QMainWindow):
         self.export_data_btn.clicked.connect(self.export_data_info)
         self.refresh_actions_btn.clicked.connect(self.refresh_actions_data)
         self.restart_app_btn.clicked.connect(self.restart_application)
+        
+        # Connect setup screen dataset dropdown to action list refresh
+        self.dataset_name_input.currentTextChanged.connect(self.on_setup_dataset_changed)
+        # Connect action name input to restore saved settings when action is selected
+        self.action_name_input.action_confirmed.connect(self.on_setup_action_changed)
 
         self.stacked_widget.setCurrentWidget(self.home_widget)
 
@@ -285,11 +293,26 @@ class CollectionApp(QMainWindow):
             style = win32gui.GetWindowLong(hwnd, win32con.GWL_STYLE)
             style |= win32con.WS_THICKFRAME | win32con.WS_CAPTION | win32con.WS_MAXIMIZEBOX | win32con.WS_MINIMIZEBOX | win32con.WS_SYSMENU
             win32gui.SetWindowLong(hwnd, win32con.GWL_STYLE, style)
-            win32gui.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 
-                                  win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | 
+            win32gui.SetWindowPos(hwnd, 0, 0, 0, 0, 0,
+                                  win32con.SWP_NOMOVE | win32con.SWP_NOSIZE |
                                   win32con.SWP_NOZORDER | win32con.SWP_FRAMECHANGED)
         except Exception as e:
             print(f"showEvent Windows hook failed: {e}")
+
+        # Responsive startup sizing — only runs once on first show
+        if not getattr(self, '_startup_centered', False):
+            self._startup_centered = True
+            from PyQt5.QtWidgets import QApplication
+            screen = QApplication.primaryScreen().availableGeometry()
+            # Use 90% of available screen, bounded to a min of 900×600
+            w = max(900, int(screen.width() * 0.90))
+            h = max(600, int(screen.height() * 0.90))
+            x = screen.x() + (screen.width() - w) // 2
+            y = screen.y() + (screen.height() - h) // 2
+            self.setGeometry(x, y, w, h)
+            # Set splitter proportionally based on actual window width
+            sidebar_w = max(220, int(w * 0.22))
+            self.content_splitter.setSizes([sidebar_w, w - sidebar_w])
 
     def nativeEvent(self, eventType, message):
         try:
@@ -331,9 +354,16 @@ class CollectionApp(QMainWindow):
                 # Titlebar drag region (custom title bar area -> TopMenuBar)
                 # Treat the top 50 pixels specifically as dragging
                 if hy < 50:
-                    # Ignore dragging if the sidebar toggle btn (left edge) or control buttons (right edge) is clicked
-                    if hx > 60 and hx < self.width() - 150:
-                        return True, win32con.HTCAPTION
+                    # Check if the mouse is hovering over a button in the top menu bar
+                    global_pos = QPoint(x, y)
+                    local_pos = self.top_menu_bar.mapFromGlobal(global_pos)
+                    child = self.top_menu_bar.childAt(local_pos)
+                    
+                    if child and isinstance(child, QPushButton):
+                        return True, win32con.HTCLIENT
+                    
+                    # Otherwise, treat the rest of the top 50px as the drag caption
+                    return True, win32con.HTCAPTION
                         
                 return True, win32con.HTCLIENT
         except Exception as e:
@@ -344,10 +374,14 @@ class CollectionApp(QMainWindow):
     def toggle_sidebar(self):
         print("Toggling sidebar...")
         is_expanded = self.sidebar_content.isVisible()
-        
+        total = sum(self.content_splitter.sizes())
+
         if is_expanded:
+            # Save the current sidebar width so we can restore it exactly later
+            self._saved_sidebar_width = self.content_splitter.sizes()[0]
             self.sidebar_content.setVisible(False)
-            self.content_splitter.setSizes([60, 1220])
+            collapsed_w = 60
+            self.content_splitter.setSizes([collapsed_w, max(0, total - collapsed_w)])
             if self.is_dark_theme:
                 self.theme_toggle_btn.setText("☀️")
             else:
@@ -356,7 +390,10 @@ class CollectionApp(QMainWindow):
             self.stop_session_button.setText("⏹️")
         else:
             self.sidebar_content.setVisible(True)
-            self.content_splitter.setSizes([300, 980])
+            # Restore to saved width, or default proportionally (22% of window width)
+            default_sidebar_w = max(220, int(self.width() * 0.22))
+            restore_w = getattr(self, '_saved_sidebar_width', default_sidebar_w)
+            self.content_splitter.setSizes([restore_w, max(0, total - restore_w)])
             if self.is_dark_theme:
                 self.theme_toggle_btn.setText("☀️ Switch to Light Theme")
             else:
@@ -434,6 +471,69 @@ class CollectionApp(QMainWindow):
         self.active_dataset = self.model_select.currentText()
         self.load_existing_actions()
 
+    def on_setup_dataset_changed(self, text):
+        """Refresh the action name dropdown when the setup screen's dataset dropdown changes.
+        This is independent of the sidebar model so the user can set up
+        a collection for any dataset, not just the one active in the sidebar."""
+        dataset_name = text.strip()
+        if not dataset_name:
+            return
+        dataset_path = os.path.join(OUTPUT_PATH, dataset_name)
+        if not os.path.exists(dataset_path):
+            # New dataset — no existing actions yet
+            if hasattr(self, 'action_name_input'):
+                self.action_name_input.set_action_list([])
+            return
+        try:
+            actions = sorted([d for d in os.listdir(dataset_path)
+                              if os.path.isdir(os.path.join(dataset_path, d))])
+            if hasattr(self, 'action_name_input'):
+                self.action_name_input.set_action_list(actions)
+        except Exception as e:
+            print(f"[on_setup_dataset_changed] Error: {e}")
+
+    def on_setup_action_changed(self, action_name):
+        """When an action is selected in the setup screen, pre-populate the
+        Connect-to-Model and Terminator dropdowns with the already-saved settings."""
+        action_name = action_name.strip()
+        if not action_name:
+            return
+        dataset_name = self.dataset_name_input.currentText().strip()
+        if not dataset_name:
+            return
+        
+        model_dir = os.path.join('model', dataset_name)
+        
+        # --- Restore connected model ---
+        action_configs = {}
+        config_path = os.path.join(model_dir, 'action_configs.json')
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    action_configs = json.load(f)
+            except Exception:
+                pass
+        connected_model = action_configs.get(action_name, "None")
+        if hasattr(self, 'connected_model_input'):
+            idx = self.connected_model_input.findText(connected_model)
+            if idx >= 0:
+                self.connected_model_input.setCurrentIndex(idx)
+            else:
+                self.connected_model_input.setCurrentIndex(0)  # default "None"
+        
+        # --- Restore terminator flag ---
+        termination_actions = []
+        term_path = os.path.join(model_dir, 'termination_actions.json')
+        if os.path.exists(term_path):
+            try:
+                with open(term_path, 'r', encoding='utf-8') as f:
+                    termination_actions = json.load(f)
+            except Exception:
+                pass
+        is_termination = action_name in termination_actions
+        if hasattr(self, 'termination_input'):
+            self.termination_input.setCurrentText("Yes" if is_termination else "No")
+
     def filter_actions(self, text):
         for i in range(self.action_list.count()):
             item = self.action_list.item(i)
@@ -442,6 +542,9 @@ class CollectionApp(QMainWindow):
     def on_action_clicked(self, item):
         action_name = item.text().split(' (')[0]
         self.action_name_input.lineEdit().setText(action_name)
+        # Also fire action_confirmed so saved settings (connected model / terminator)
+        # are immediately restored whenever the user clicks an action in the list.
+        self.on_setup_action_changed(action_name)
 
     # --- Navigation ---
     
@@ -593,12 +696,25 @@ class CollectionApp(QMainWindow):
         self.recognition_prediction_label.setText("Ready to recognize...")
         self.recognition_confidence_label.setText("")
     
-    def on_word_committed(self, word):
+    def on_word_committed(self, word, is_termination=False):
         """Called when recognition_logic commits a confirmed word."""
         if not hasattr(self, '_sentence_words'):
             self._sentence_words = []
         self._sentence_words.append(word)
         self._refresh_sentence_display()
+        
+        if is_termination:
+            current_sentence = self.sentence_label.text()
+            if current_sentence and current_sentence != "(sentence will appear here)":
+                completed_text = current_sentence + "."
+                current_panel_text = self.completed_sentences_text.toPlainText()
+                if current_panel_text:
+                    self.completed_sentences_text.append(completed_text)
+                else:
+                    self.completed_sentences_text.setText(completed_text)
+                
+                # Clear the bottom sentence builder for the next sentence
+                self.sentence_clear()
 
     def _refresh_sentence_display(self):
         if not hasattr(self, '_sentence_words') or not self._sentence_words:
@@ -664,6 +780,66 @@ class CollectionApp(QMainWindow):
 
     # --- Session Logic ---
 
+    def save_connection_only(self):
+        dataset_name = self.dataset_name_input.currentText().strip()
+        if not dataset_name:
+            dataset_name = "Default"
+            
+        self.action_name = self.action_name_input.currentText().strip()
+        if not self.action_name:
+            QMessageBox.warning(self, "Error", "Please enter an action name.")
+            return
+            
+        import json
+        config_path = os.path.join('model', dataset_name, 'action_configs.json')
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+        action_configs = {}
+        if os.path.exists(config_path):
+            with open(config_path, 'r', encoding='utf-8') as f:
+                try:
+                    action_configs = json.load(f)
+                except json.JSONDecodeError:
+                    pass
+        
+        connected_model = "None"
+        if hasattr(self, 'connected_model_input'):
+            connected_model = self.connected_model_input.currentText().strip()
+            
+        if connected_model and connected_model != "None":
+            action_configs[self.action_name] = connected_model
+        else:
+            action_configs.pop(self.action_name, None)
+            
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(action_configs, f, indent=4, ensure_ascii=False)
+            
+        # --- NEW: Save termination config ---
+        term_config_path = os.path.join('model', dataset_name, 'termination_actions.json')
+        termination_actions = []
+        if os.path.exists(term_config_path):
+            with open(term_config_path, 'r', encoding='utf-8') as f:
+                try:
+                    termination_actions = json.load(f)
+                except json.JSONDecodeError:
+                    pass
+        
+        is_termination = False
+        if hasattr(self, 'termination_input'):
+            is_termination = (self.termination_input.currentText() == "Yes")
+            
+        if is_termination:
+            if self.action_name not in termination_actions:
+                termination_actions.append(self.action_name)
+        else:
+            if self.action_name in termination_actions:
+                termination_actions.remove(self.action_name)
+                
+        with open(term_config_path, 'w', encoding='utf-8') as f:
+            json.dump(termination_actions, f, indent=4, ensure_ascii=False)
+        # --- END NEW ---
+            
+        QMessageBox.information(self, "Success", f"Connection saved:\nAction '{self.action_name}' -> Model '{connected_model}'\nTerminator: {is_termination}")
+
     def start_session(self):
         dataset_name = self.dataset_name_input.currentText().strip()
         if not dataset_name:
@@ -704,6 +880,30 @@ class CollectionApp(QMainWindow):
             
         with open(config_path, 'w') as f:
             json.dump(action_configs, f, indent=4)
+            
+        # --- NEW: Save termination config ---
+        term_config_path = os.path.join('model', dataset_name, 'termination_actions.json')
+        termination_actions = []
+        if os.path.exists(term_config_path):
+            with open(term_config_path, 'r', encoding='utf-8') as f:
+                try:
+                    termination_actions = json.load(f)
+                except json.JSONDecodeError:
+                    pass
+        
+        is_termination = False
+        if hasattr(self, 'termination_input'):
+            is_termination = (self.termination_input.currentText() == "Yes")
+            
+        if is_termination:
+            if self.action_name not in termination_actions:
+                termination_actions.append(self.action_name)
+        else:
+            if self.action_name in termination_actions:
+                termination_actions.remove(self.action_name)
+                
+        with open(term_config_path, 'w', encoding='utf-8') as f:
+            json.dump(termination_actions, f, indent=4, ensure_ascii=False)
         # --- END NEW ---
         
         user_start = self.start_video_num_input.value()
