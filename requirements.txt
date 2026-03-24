@@ -7,3 +7,4 @@ tensorflow==2.16.1
 scikit-learn==1.5.2
 matplotlib==3.9.2
 protobuf==4.25.3
+psutil==5.9.8

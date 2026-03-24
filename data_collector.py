@@ -508,11 +508,11 @@ class CollectionApp(QMainWindow):
         if not hasattr(self, 'active_dataset'):
             self.active_dataset = "Default"
             
-        if not os.path.exists(DATA_PATH):
-            os.makedirs(DATA_PATH)
+        if not os.path.exists(OUTPUT_PATH):
+            os.makedirs(OUTPUT_PATH)
         
         try:
-            datasets = [d for d in os.listdir(DATA_PATH) if os.path.isdir(os.path.join(DATA_PATH, d))]
+            datasets = [d for d in os.listdir(OUTPUT_PATH) if os.path.isdir(os.path.join(OUTPUT_PATH, d))]
             datasets.sort()
             
             if not datasets:
@@ -529,17 +529,17 @@ class CollectionApp(QMainWindow):
                 self.model_select.setCurrentText(self.active_dataset)
                 self.dataset_name_input.setCurrentText(self.active_dataset)
                 
-            dataset_path = os.path.join(DATA_PATH, self.active_dataset)
+            dataset_path = os.path.join(OUTPUT_PATH, self.active_dataset)
             if not os.path.exists(dataset_path):
                 os.makedirs(dataset_path)
                 
             actions = [d for d in os.listdir(dataset_path) if os.path.isdir(os.path.join(dataset_path, d))]
             actions.sort()
             
-            # Get video counts
+            # Get video counts (which are stored as folders inside the action folder)
             action_items = []
             for action in actions:
-                vid_count = len([f for f in os.listdir(os.path.join(dataset_path, action)) if f.endswith(('.mp4', '.avi', '.mov', '.webm'))])
+                vid_count = len([d for d in os.listdir(os.path.join(dataset_path, action)) if os.path.isdir(os.path.join(dataset_path, action, d))])
                 action_items.append(f"{action} ({vid_count})")
 
             self.action_list.addItems(action_items)
@@ -567,7 +567,7 @@ class CollectionApp(QMainWindow):
         if not dataset_name:
             dataset_name = "Default"
             
-        dataset_path = os.path.join(DATA_PATH, dataset_name)
+        dataset_path = os.path.join(OUTPUT_PATH, dataset_name)
         actions = []
         if os.path.exists(dataset_path):
             actions = [d for d in os.listdir(dataset_path) if os.path.isdir(os.path.join(dataset_path, d))]
@@ -612,11 +612,8 @@ class CollectionApp(QMainWindow):
         # --- Find starting number (from your script) ---
         self.start_num = 0
         while True:
-            video_file_exists = any(
-                os.path.exists(os.path.join(self.action_video_dir, f"{self.start_num}{ext}")) 
-                for ext in ['.mp4', '.webm', '.avi', '.mov']
-            )
-            if not video_file_exists:
+            # Check if processed landmark directory exists for this number
+            if not os.path.exists(os.path.join(self.action_landmark_dir, str(self.start_num))):
                 break
             self.start_num += 1
         print(f"Starting video number will be: {self.start_num}")

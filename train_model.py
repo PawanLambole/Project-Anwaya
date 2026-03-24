@@ -30,14 +30,34 @@ print(f"Training on dataset: {DATASET_NAME}")
 if os.path.exists(STOP_FLAG_PATH):
     os.remove(STOP_FLAG_PATH)
 
+RAW_DATA_PATH = os.path.join('ISL_Data', DATASET_NAME)
+
 # Ensure actions are sorted so the LabelEncoder is consistent
 if not os.path.exists(PROCESSED_DATA_PATH):
     print(f"Error: Directory {PROCESSED_DATA_PATH} does not exist.")
     exit(1)
     
-actions = np.array(sorted([d for d in os.listdir(PROCESSED_DATA_PATH) if os.path.isdir(os.path.join(PROCESSED_DATA_PATH, d))]))
+# Filter processed actions to only include ones that still exist in raw data
+valid_actions = set()
+if os.path.exists(RAW_DATA_PATH):
+    valid_actions = set([d for d in os.listdir(RAW_DATA_PATH) if os.path.isdir(os.path.join(RAW_DATA_PATH, d))])
+
+all_processed_actions = [d for d in os.listdir(PROCESSED_DATA_PATH) if os.path.isdir(os.path.join(PROCESSED_DATA_PATH, d))]
+
+if valid_actions:
+    valid_processed_actions = [d for d in all_processed_actions if d in valid_actions]
+    zombie_folders = set(all_processed_actions) - valid_actions
+    if zombie_folders:
+        try:
+            print(f"Warning: Ignoring {len(zombie_folders)} deleted/renamed folders found in processed data: {zombie_folders}")
+        except UnicodeEncodeError:
+            print(f"Warning: Ignoring {len(zombie_folders)} deleted/renamed folders found in processed data.")
+else:
+    valid_processed_actions = all_processed_actions # Fallback if raw data directory is missing
+    
+actions = np.array(sorted(valid_processed_actions))
 if len(actions) == 0:
-    print(f"Error: No actions found in {PROCESSED_DATA_PATH}.")
+    print(f"Error: No valid matching actions found between {RAW_DATA_PATH} and {PROCESSED_DATA_PATH}.")
     exit(1)
     
 num_actions = len(actions)

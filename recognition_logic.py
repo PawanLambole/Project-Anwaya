@@ -3,6 +3,8 @@ import numpy as np
 import mediapipe as mp
 import pickle
 import time
+import json
+import os
 from keras.models import load_model
 from PyQt5.QtCore import QThread, pyqtSignal, Qt
 from PyQt5.QtGui import QImage, QPixmap
@@ -32,8 +34,8 @@ class RecognitionWorker(QThread):
         self.threshold = 0.75          # minimum confidence to count
 
         # --- Word commit state ---
-        self.CONSECUTIVE_NEEDED = 3    # same word must appear N times in a row
-        self.IDLE_TO_COMMIT   = 2.0   # seconds of idle before committing
+        self.CONSECUTIVE_NEEDED = 3    # 3 predictions = 90 frames total
+        self.IDLE_TO_COMMIT   = 3.0   # seconds of idle before committing
         self._consec_word     = None   # word being tracked
         self._consec_count    = 0      # how many times seen in a row
         self._candidate_word  = None   # word ready to be committed
@@ -43,11 +45,23 @@ class RecognitionWorker(QThread):
         self.mp_holistic = mp.solutions.holistic
         self.mp_drawing = mp.solutions.drawing_utils
         
-    def load_model_and_encoder(self):
+    def load_model_and_encoder(self, target_dataset=None):
         """Load the trained model and label encoder"""
-        
+        if target_dataset:
+            self.dataset_name = target_dataset
+            
         model_path = f'model/{self.dataset_name}/{self.dataset_name}_model.keras'
         encoder_path = f'model/{self.dataset_name}/{self.dataset_name}_label_encoder.pkl'
+        
+        self.action_configs = {}
+        config_path = f'model/{self.dataset_name}/action_configs.json'
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, 'r') as f:
+                    self.action_configs = json.load(f)
+            except Exception as e:
+                print(f"Failed to load action_configs.json: {e}")
+                
         
         try:
             print(f"Attempting to load model from '{model_path}'...")
@@ -214,6 +228,13 @@ class RecognitionWorker(QThread):
             print("Starting recognition loop...")
 
             # ── Main recognition loop (model is ready) ──────────────────────
+            
+            # --- Frame Skip for Predictions ---
+            frames_since_last_pred = 0
+            
+            # --- No Hands Tracking ---
+            no_hands_since = None
+            
             while self.running:
                 t0 = time.monotonic()
 
@@ -241,110 +262,124 @@ class RecognitionWorker(QThread):
                 hands_visible = (results.left_hand_landmarks is not None or
                                  results.right_hand_landmarks is not None)
 
-                # If hands just disappeared, flush the sequence so stale
-                # keyframes from the previous sign don't pollute the next one.
-                if not hands_visible and self.sequence:
-                    self.sequence = []
+                # --- Handle "No Hands" state ---
+                if not hands_visible:
+                    if no_hands_since is None:
+                        no_hands_since = time.monotonic()
+                    
+                    no_hands_duration = time.monotonic() - no_hands_since
+                    
+                    if self._candidate_word:
+                        if no_hands_duration >= 4.0:
+                            # 1s wait + 3s countdown finished -> COMMIT IT
+                            self.word_committed.emit(self._candidate_word)
+                            self.prediction_ready.emit(f"✅ Committed: {self._candidate_word}", 0.0)
+                            
+                            committed_word = self._candidate_word
+                            
+                            # Reset tracking state
+                            self._candidate_word = None
+                            self._consec_word = None
+                            self._consec_count = 0
+                            self.sequence = []
+                            no_hands_since = None
+                            
+                            # Check if the committed word has a connected model
+                            if hasattr(self, 'action_configs') and committed_word in self.action_configs:
+                                connected_model = self.action_configs[committed_word]
+                                self.status_update.emit(f"Switching to model: {connected_model}...")
+                                # Load new model and encoder
+                                if self.load_model_and_encoder(connected_model):
+                                    self.status_update.emit(f"Recognition active ({connected_model})")
+                                continue # Skip the rest of this loop to start fresh
 
-                is_active = hands_visible
-
-                if is_active:
-                    self._last_active_time = time.monotonic()
-
-                    # ── Key fix: don't reset the idle/commit timer once a
-                    # candidate is locked. Micro-movements while the user
-                    # holds still would otherwise restart the 2s countdown.
-                    if self._candidate_word is None:
-                        self._idle_since = None
-
+                            
+                        elif no_hands_duration >= 1.0:
+                            # 1s wait finished, now in the 3s countdown phase
+                            remaining = max(0.0, 4.0 - no_hands_duration)
+                            self.prediction_ready.emit(f"🟡 {self._candidate_word}  — committing in {remaining:.1f}s", 0.0)
+                            
+                        else:
+                            # Still in the initial 1s wait period, just show the candidate normally
+                            self.prediction_ready.emit(f"⭐ {self._candidate_word}", 1.0)
+                            
+                    else:
+                        # No candidate, just waiting
+                        if self.sequence and no_hands_duration <= 1.5:
+                            # Pad sequence with zeros so we don't restart tracking momentarily
+                            keypoints = np.zeros(1662)
+                            self.sequence.append(keypoints)
+                            self.sequence = self.sequence[-self.MAX_SEQUENCE_LENGTH:]
+                        else:
+                            self.sequence = []
+                        self.prediction_ready.emit("Waiting for sign...", 0.0)
+                        
+                else:
+                    # Hands are visible! Reset the no-hands timer.
+                    if no_hands_since is not None:
+                        no_hands_duration = time.monotonic() - no_hands_since
+                        no_hands_since = None
+                        
+                        # If the pause was interrupted AFTER the 1s wait (during the countdown), cancel the candidate
+                        if self._candidate_word is not None and no_hands_duration > 1.0:
+                            self._candidate_word = None
+                            self._consec_word = None
+                            self._consec_count = 0
+                            self.sequence = []
+                        
                     keypoints = self.extract_keypoints(results)
                     self.sequence.append(keypoints)
                     self.sequence = self.sequence[-self.MAX_SEQUENCE_LENGTH:]
-
-                    # --- Make prediction when sequence is full ---
-                    if len(self.sequence) == self.MAX_SEQUENCE_LENGTH:
-                        input_data = np.expand_dims(self.sequence, axis=0)
-                        pred = self.model(input_data, training=False).numpy()[0]
-                        top_idx    = np.argmax(pred)
-                        confidence = pred[top_idx]
-
-                        if confidence >= self.threshold:
-                            predicted_action = self.actions[top_idx]
-
-                            # --- Consecutive stability check ---
-                            if predicted_action == self._consec_word:
-                                self._consec_count += 1
-                            else:
-                                # Different word — restart count
-                                self._consec_word  = predicted_action
-                                self._consec_count = 1
-                                # If user switches to a fully different sign,
-                                # cancel the current candidate
-                                if self._candidate_word is not None:
-                                    self._candidate_word = None
-                                    self._idle_since     = None
-
-                            if self._consec_count >= self.CONSECUTIVE_NEEDED:
-                                # Candidate locked
-                                if self._candidate_word != predicted_action:
-                                    # Newly locked — start idle timer now
-                                    self._candidate_word = predicted_action
-                                    self._idle_since     = time.monotonic()
-                                self.prediction_ready.emit(
-                                    f"🟡 {predicted_action}  (confirmed — pause to commit)",
-                                    float(confidence)
-                                )
-                            else:
-                                # Still building up consecutive count
-                                self.prediction_ready.emit(
-                                    f"{predicted_action}  [{self._consec_count}/{self.CONSECUTIVE_NEEDED}]",
-                                    float(confidence)
-                                )
-                        else:
-                            # Confidence too low — only cancel candidate if no longer visible
-                            if self._candidate_word is None:
-                                self._consec_word  = None
-                                self._consec_count = 0
-                            self.prediction_ready.emit("Low confidence...", float(confidence))
+                    
+                # --- Predict if sequence is full ---
+                if len(self.sequence) == self.MAX_SEQUENCE_LENGTH:
+                    input_data = np.expand_dims(self.sequence, axis=0)
+                    pred = self.model(input_data, training=False).numpy()[0]
+                    top_idx = np.argmax(pred)
+                    confidence = pred[top_idx]
+                    
+                    # Clear sequence so the next 30 frames are entirely new
+                    self.sequence = []
+                    
+                    predicted_action = self.actions[top_idx]
+                        
+                    if predicted_action == self._consec_word:
+                        self._consec_count += 1
+                    else:
+                        # If user switched signs, candidate is canceled and we start over for the new word
+                        if self._candidate_word is not None and self._candidate_word != predicted_action:
+                            self._candidate_word = None
+                            
+                        self._consec_word = predicted_action
+                        self._consec_count = 1
+                        
+                    if self._consec_count >= self.CONSECUTIVE_NEEDED:
+                        self._candidate_word = predicted_action
+                        self.prediction_ready.emit(
+                            f"⭐ {predicted_action}",
+                            float(confidence)
+                        )
+                    else:
+                        # If we have a candidate but we are currently seeing a DIFFERENT sign building up,
+                        # show the UI for the new sign building up.
+                        if self._candidate_word and self._candidate_word != predicted_action:
+                            self._candidate_word = None # explicitly drop candidate if new one is taking over
+                            
+                        self.prediction_ready.emit(
+                            f"{predicted_action}  [{self._consec_count}/{self.CONSECUTIVE_NEEDED}]",
+                            float(confidence)
+                        )
+                elif hands_visible or (not hands_visible and self.sequence and no_hands_duration <= 1.5):
+                    # We are in the middle of collecting 30 frames
+                    if self._candidate_word:
+                        self.prediction_ready.emit(f"⭐ {self._candidate_word}", 1.0)
+                    elif self._consec_count > 0:
+                        self.prediction_ready.emit(f"{self._consec_word}  [{self._consec_count}/{self.CONSECUTIVE_NEEDED}]", 1.0)
                     else:
                         self.prediction_ready.emit(
                             f"Collecting frames... ({len(self.sequence)}/{self.MAX_SEQUENCE_LENGTH})",
                             0.0
                         )
-
-                else:
-                    # --- IDLE branch ---
-                    now = time.monotonic()
-                    if self._idle_since is None:
-                        self._idle_since = now
-
-                    idle_secs = now - self._idle_since
-
-                    if self._candidate_word and idle_secs >= self.IDLE_TO_COMMIT:
-                        # ✅ COMMIT the word
-                        self.word_committed.emit(self._candidate_word)
-                        self.prediction_ready.emit(
-                            f"✅ Committed: {self._candidate_word}", 0.0
-                        )
-                        # Reset everything
-                        self._candidate_word = None
-                        self._consec_word    = None
-                        self._consec_count   = 0
-                        self.sequence        = []
-                        self._idle_since     = None
-                    elif idle_secs > 1.5 and self._candidate_word is None:
-                        # Long idle with no candidate — just reset sequence
-                        self.sequence = []
-                        self.prediction_ready.emit("Waiting for sign...", 0.0)
-                    elif self._candidate_word:
-                        # Counting down to commit — show stable countdown
-                        remaining = max(0.0, self.IDLE_TO_COMMIT - idle_secs)
-                        self.prediction_ready.emit(
-                            f"🟡 {self._candidate_word}  — committing in {remaining:.1f}s",
-                            0.0
-                        )
-                    else:
-                        self.prediction_ready.emit("Waiting for sign...", 0.0)
 
                 # Emit frame to UI
                 self._emit_frame(image)

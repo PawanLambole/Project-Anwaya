@@ -71,10 +71,13 @@ def enumerate_cameras(max_test: int = 8) -> list[dict]:
     # 1. Try to get real device names
     device_names = _get_device_names_via_pygrabber()
     if not device_names:
-        device_names = []   # fallback: we'll just use generic names
+        device_names = _get_device_names_via_win32com()
 
     cameras = []
-    for idx in range(max_test):
+    # If we successfully got device names, only test that many indices to save massive startup time
+    test_range = len(device_names) if device_names else max_test
+    
+    for idx in range(test_range):
         cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
         if not cap.isOpened():
             cap = cv2.VideoCapture(idx)

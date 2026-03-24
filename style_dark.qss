@@ -7,7 +7,7 @@ QMainWindow, #MainWindow {
 
 /* Global Font & Text */
 QWidget {
-    font-family: 'Inter', 'Segoe UI', 'Roboto', sans-serif;
+    font-family: 'Inter', 'Segoe UI', 'Roboto', 'Nirmala UI', 'Mangal', sans-serif;
     color: #F3F4F6; /* Crisp Light Gray */
     font-size: 14px;
 }
@@ -25,7 +25,7 @@ QWidget {
     letter-spacing: 0.5px;
 }
 #SplashTitleSamarkan {
-    font-family: 'Samarkan', sans-serif;
+    font-family: 'Samarkan', 'Nirmala UI', 'Mangal', sans-serif;
     font-size: 58px;
     font-weight: 800;
     color: #EA580C; /* Orange */
@@ -47,7 +47,7 @@ QWidget {
     letter-spacing: -0.5px;
 }
 #LabelHomeTitleSamarkan {
-    font-family: 'Samarkan', sans-serif;
+    font-family: 'Samarkan', 'Nirmala UI', 'Mangal', sans-serif;
     font-size: 80px;
     font-weight: 900;
     color: #EA580C; /* Orange */
@@ -521,7 +521,7 @@ QWidget#CollectionStatusBar {
 QLabel#CollectionStatusLabel {
     color: #CBD5E1;
     font-size: 14px;
-    font-family: 'Roboto';
+    font-family: 'Roboto', 'Nirmala UI', 'Mangal', sans-serif;
     letter-spacing: 0.5px;
 }
 
@@ -530,7 +530,7 @@ QPushButton#CollectionStartBtn {
     color: #FFFFFF;
     font-size: 14px;
     font-weight: bold;
-    font-family: 'Roboto';
+    font-family: 'Roboto', 'Nirmala UI', 'Mangal', sans-serif;
     padding: 10px 24px;
     border-radius: 6px;
     border: none;
@@ -548,7 +548,7 @@ QPushButton#CollectionStopBtn {
     color: #F87171;
     font-size: 14px;
     font-weight: bold;
-    font-family: 'Roboto';
+    font-family: 'Roboto', 'Nirmala UI', 'Mangal', sans-serif;
     padding: 10px 20px;
     border-radius: 6px;
     border: 2px solid #F87171;

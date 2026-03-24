@@ -383,10 +383,10 @@ class CollectionApp(QMainWindow):
         self.model_select.blockSignals(True)
         self.model_select.clear()
         
-        if not os.path.exists(DATA_PATH):
-            os.makedirs(DATA_PATH)
+        if not os.path.exists(OUTPUT_PATH):
+            os.makedirs(OUTPUT_PATH)
         try:
-            datasets = [d for d in os.listdir(DATA_PATH) if os.path.isdir(os.path.join(DATA_PATH, d))]
+            datasets = [d for d in os.listdir(OUTPUT_PATH) if os.path.isdir(os.path.join(OUTPUT_PATH, d))]
             datasets.sort()
             
             if not datasets:
@@ -397,6 +397,11 @@ class CollectionApp(QMainWindow):
             self.training_dataset_dropdown.clear()
             self.training_dataset_dropdown.addItems(datasets)
             
+            if hasattr(self, 'connected_model_input'):
+                self.connected_model_input.clear()
+                self.connected_model_input.addItem("None")
+                self.connected_model_input.addItems(datasets)
+            
             if self.active_dataset in datasets:
                 self.model_select.setCurrentText(self.active_dataset)
                 self.dataset_name_input.setCurrentText(self.active_dataset)
@@ -405,7 +410,7 @@ class CollectionApp(QMainWindow):
                 self.model_select.setCurrentText(self.active_dataset)
                 self.dataset_name_input.setCurrentText(self.active_dataset)
                 
-            dataset_path = os.path.join(DATA_PATH, self.active_dataset)
+            dataset_path = os.path.join(OUTPUT_PATH, self.active_dataset)
             if not os.path.exists(dataset_path):
                 os.makedirs(dataset_path)
                 
@@ -413,7 +418,7 @@ class CollectionApp(QMainWindow):
             actions.sort()
             action_items = []
             for action in actions:
-                vid_count = len([f for f in os.listdir(os.path.join(dataset_path, action)) if f.endswith(('.mp4', '.avi', '.mov', '.webm'))])
+                vid_count = len([d for d in os.listdir(os.path.join(dataset_path, action)) if os.path.isdir(os.path.join(dataset_path, action, d))])
                 action_items.append(f"{action} ({vid_count})")
             self.action_list.addItems(action_items)
 
@@ -599,7 +604,18 @@ class CollectionApp(QMainWindow):
         if not hasattr(self, '_sentence_words') or not self._sentence_words:
             self.sentence_label.setText("(sentence will appear here)")
         else:
-            self.sentence_label.setText(" ".join(self._sentence_words))
+            display_text = ""
+            for i, w in enumerate(self._sentence_words):
+                if i == 0:
+                    display_text += w
+                else:
+                    prev_w = self._sentence_words[i-1]
+                    # If this word is 1 char and prev word is 1 char, don't add space
+                    if len(w) == 1 and len(prev_w) == 1 and w.isalpha() and prev_w.isalpha():
+                        display_text += w
+                    else:
+                        display_text += " " + w
+            self.sentence_label.setText(display_text)
 
     def sentence_backspace(self):
         """Remove the last committed word."""
@@ -613,9 +629,12 @@ class CollectionApp(QMainWindow):
         self._refresh_sentence_display()
 
     def update_recognition_frame(self, qt_image):
-        """Update video frame display"""
+        """Update video frame display - scale to fit the label"""
         pixmap = QPixmap.fromImage(qt_image)
-        # Simply set the raw pixmap matching camera resolution
+        label_w = self.recognition_video_label.width()
+        label_h = self.recognition_video_label.height()
+        if label_w > 0 and label_h > 0:
+            pixmap = pixmap.scaled(label_w, label_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self.recognition_video_label.setPixmap(pixmap)
     
     def update_prediction(self, action, confidence):
@@ -662,13 +681,38 @@ class CollectionApp(QMainWindow):
         os.makedirs(self.action_video_dir, exist_ok=True)
         os.makedirs(self.action_landmark_dir, exist_ok=True)
         
+        # --- NEW: Save connected model config ---
+        import json
+        config_path = os.path.join('model', dataset_name, 'action_configs.json')
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+        action_configs = {}
+        if os.path.exists(config_path):
+            with open(config_path, 'r') as f:
+                try:
+                    action_configs = json.load(f)
+                except json.JSONDecodeError:
+                    pass
+        
+        connected_model = "None"
+        if hasattr(self, 'connected_model_input'):
+            connected_model = self.connected_model_input.currentText().strip()
+            
+        if connected_model and connected_model != "None":
+            action_configs[self.action_name] = connected_model
+        else:
+            action_configs.pop(self.action_name, None)
+            
+        with open(config_path, 'w') as f:
+            json.dump(action_configs, f, indent=4)
+        # --- END NEW ---
+        
         user_start = self.start_video_num_input.value()
         if user_start == 0:
             # Auto-detect: find the next available number
             self.start_num = 0
             while True:
-                video_file_exists = any(os.path.exists(os.path.join(self.action_video_dir, f"{self.start_num}{ext}")) for ext in ['.mp4', '.webm', '.avi', '.mov'])
-                if not video_file_exists: break
+                if not os.path.exists(os.path.join(self.action_landmark_dir, str(self.start_num))):
+                    break
                 self.start_num += 1
             print(f"[Auto-detect] Starting video number: {self.start_num}")
         else:

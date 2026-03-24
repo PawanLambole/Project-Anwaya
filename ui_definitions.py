@@ -8,6 +8,13 @@ from PyQt5.QtGui import QFont
 from PyQt5.QtCore import Qt, QTimer, QStringListModel
 
 
+def _ui_font(point_size: int, weight: int = QFont.Normal) -> QFont:
+    font = QFont()
+    font.setPointSize(point_size)
+    font.setWeight(weight)
+    return font
+
+
 class ActionComboBox(QComboBox):
     """
     An editable QComboBox for Marathi action names.
@@ -28,7 +35,7 @@ class ActionComboBox(QComboBox):
         self.setCompleter(self._completer)
         # Make the popup readable — large font + comfortable row height
         popup = self._completer.popup()
-        popup.setFont(QFont('Roboto', 22))
+        popup.setFont(_ui_font(22))
         popup.setStyleSheet("""
             QListView {
                 font-size: 22px;
@@ -414,7 +421,7 @@ def create_setup_widget(main_window):
     layout.setContentsMargins(40, 30, 40, 30)
 
     title = QLabel("Setup New Collection Session")
-    title.setFont(QFont('Roboto', 24, QFont.Bold))
+    title.setFont(_ui_font(24, QFont.Bold))
     title.setAlignment(Qt.AlignCenter)
     layout.addWidget(title)
     layout.addStretch(1)
@@ -425,7 +432,7 @@ def create_setup_widget(main_window):
     main_window.dataset_name_input = QComboBox()
     main_window.dataset_name_input.setEditable(True)
     main_window.dataset_name_input.setPlaceholderText("e.g., Default")
-    main_window.dataset_name_input.setFont(QFont('Roboto', 18))
+    main_window.dataset_name_input.setFont(_ui_font(18))
     layout.addWidget(main_window.dataset_name_input)
     layout.addWidget(QLabel("(Select from list or type new)", objectName="LabelHelper"))
 
@@ -435,9 +442,18 @@ def create_setup_widget(main_window):
     main_window.action_name_input = ActionComboBox()
     main_window.action_name_input.setPlaceholderText("e.g., आभार")
     main_window.action_name_input.lineEdit().setPlaceholderText("e.g., आभार")
-    main_window.action_name_input.setFont(QFont('Roboto', 18))
+    main_window.action_name_input.setFont(_ui_font(18))
     layout.addWidget(main_window.action_name_input)
     layout.addWidget(QLabel("(Type action name — suggestions appear after typing)", objectName="LabelHelper"))
+
+    lbl_connected_model = QLabel("Connect Action to Model (Optional)")
+    lbl_connected_model.setObjectName("SetupLabel")
+    layout.addWidget(lbl_connected_model)
+    main_window.connected_model_input = QComboBox()
+    main_window.connected_model_input.addItem("None")
+    main_window.connected_model_input.setFont(_ui_font(18))
+    layout.addWidget(main_window.connected_model_input)
+    layout.addWidget(QLabel("(When this action is recognized, it will switch to this model)", objectName="LabelHelper"))
 
     lbl_num = QLabel("Number of Videos to Record")
     lbl_num.setObjectName("SetupLabel")
@@ -445,7 +461,7 @@ def create_setup_widget(main_window):
     main_window.num_videos_input = QSpinBox()
     main_window.num_videos_input.setRange(1, 1000)
     main_window.num_videos_input.setValue(50)
-    main_window.num_videos_input.setFont(QFont('Roboto', 18))
+    main_window.num_videos_input.setFont(_ui_font(18))
     layout.addWidget(main_window.num_videos_input)
 
     lbl_start = QLabel("Start From (Video Number)")
@@ -454,7 +470,7 @@ def create_setup_widget(main_window):
     main_window.start_video_num_input = QSpinBox()
     main_window.start_video_num_input.setRange(0, 9999)
     main_window.start_video_num_input.setValue(0)
-    main_window.start_video_num_input.setFont(QFont('Roboto', 18))
+    main_window.start_video_num_input.setFont(_ui_font(18))
     layout.addWidget(main_window.start_video_num_input)
     layout.addWidget(QLabel(
         "Set to 0 to auto-detect the next available number.\n"
@@ -470,7 +486,7 @@ def create_setup_widget(main_window):
     setup_button_layout.addWidget(main_window.back_button)
 
     main_window.start_session_button = QPushButton("START SESSION")
-    main_window.start_session_button.setFont(QFont('Roboto', 18, QFont.Bold))
+    main_window.start_session_button.setFont(_ui_font(18, QFont.Bold))
     main_window.start_session_button.setMinimumHeight(50)
     main_window.start_session_button.clicked.connect(main_window.start_session)
     setup_button_layout.addWidget(main_window.start_session_button, 1)
@@ -481,67 +497,70 @@ def create_setup_widget(main_window):
 
 def create_recognition_widget(main_window):
     """
-    Creates the Recognition (Real-time Translation) Page UI
+    Creates the Recognition (Real-time Translation) Page UI.
+    Fully responsive — video fills all available space via stretch factor.
     """
     widget = QWidget()
     widget.setObjectName("RecognitionPage")
     layout = QVBoxLayout(widget)
-    layout.setContentsMargins(40, 40, 40, 40)
-    layout.setSpacing(25)
+    layout.setContentsMargins(16, 10, 16, 10)
+    layout.setSpacing(6)
 
-    # Header with back button
+    # ── Header ──────────────────────────────────────────────────────────────
     header_layout = QHBoxLayout()
     main_window.recognition_back_btn = QPushButton("← Back to Home")
     main_window.recognition_back_btn.setObjectName("ButtonGray")
     header_layout.addWidget(main_window.recognition_back_btn)
-    
+
     header_title = QLabel("Real-Time ISL Recognition")
     header_title.setObjectName("RecognitionHeaderTitle")
     header_title.setAlignment(Qt.AlignCenter)
     header_layout.addWidget(header_title, 1)
-    
-    header_layout.addWidget(QLabel())  # Spacer for symmetry
-    header_layout.itemAt(2).widget().setFixedWidth(main_window.recognition_back_btn.sizeHint().width())
-    
+
+    # Invisible spacer to balance the back button on the right
+    spacer_lbl = QLabel()
+    spacer_lbl.setFixedWidth(main_window.recognition_back_btn.sizeHint().width())
+    header_layout.addWidget(spacer_lbl)
+
     layout.addLayout(header_layout)
 
-    # Video display area
+    # ── Video (fills all remaining space) ───────────────────────────────────
     main_window.recognition_video_label = QLabel()
     main_window.recognition_video_label.setObjectName("videoLabel")
     main_window.recognition_video_label.setAlignment(Qt.AlignCenter)
-    main_window.recognition_video_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-    main_window.recognition_video_label.setStyleSheet("""
-        QLabel#videoLabel {
-            background-color: transparent;
-        }
-    """)
+    # QSizePolicy.Ignored: the pixmap size never feeds back into the layout,
+    # preventing the infinite-zoom loop when the sidebar is toggled.
+    main_window.recognition_video_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+    main_window.recognition_video_label.setStyleSheet("QLabel#videoLabel { background-color: transparent; }")
     main_window.recognition_video_label.setText("Camera Stopped")
-    layout.addWidget(main_window.recognition_video_label, 1)
+    layout.addWidget(main_window.recognition_video_label, 1)   # stretch=1 → takes all spare height
 
-    # Prediction display banner
+    # ── Prediction banner (compact, fixed height) ───────────────────────────
     prediction_banner = QWidget()
     prediction_banner.setObjectName("predictionBanner")
-    prediction_banner.setFixedHeight(60)
+    prediction_banner.setFixedHeight(40)
+    prediction_banner.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
     prediction_layout = QHBoxLayout(prediction_banner)
-    prediction_layout.setContentsMargins(20, 0, 20, 0)
-    
+    prediction_layout.setContentsMargins(14, 0, 14, 0)
+    prediction_layout.setSpacing(8)
+
     main_window.recognition_prediction_label = QLabel("Ready to recognize...")
     main_window.recognition_prediction_label.setObjectName("predictionLabel")
     main_window.recognition_prediction_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-    
+
     main_window.recognition_confidence_label = QLabel("")
     main_window.recognition_confidence_label.setObjectName("confidenceLabel")
     main_window.recognition_confidence_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-    
-    prediction_layout.addWidget(main_window.recognition_prediction_label)
+
+    prediction_layout.addWidget(main_window.recognition_prediction_label, 1)
     prediction_layout.addWidget(main_window.recognition_confidence_label)
-    
     layout.addWidget(prediction_banner)
 
-    # --- Sentence Output Panel ---
+    # ── Sentence panel (compact, fixed height) ──────────────────────────────
     sentence_panel = QWidget()
     sentence_panel.setObjectName("SentencePanel")
-    sentence_panel.setFixedHeight(80)
+    sentence_panel.setFixedHeight(56)
+    sentence_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
     sentence_panel.setStyleSheet("""
         QWidget#SentencePanel {
             border-radius: 8px;
@@ -550,36 +569,30 @@ def create_recognition_widget(main_window):
         }
     """)
     sentence_panel_layout = QHBoxLayout(sentence_panel)
-    sentence_panel_layout.setContentsMargins(16, 8, 8, 8)
-    sentence_panel_layout.setSpacing(8)
+    sentence_panel_layout.setContentsMargins(12, 4, 8, 4)
+    sentence_panel_layout.setSpacing(6)
 
     sentence_icon = QLabel("📝")
-    sentence_icon.setFixedWidth(28)
+    sentence_icon.setFixedWidth(26)
     sentence_panel_layout.addWidget(sentence_icon)
 
     main_window.sentence_label = QLabel("")
     main_window.sentence_label.setObjectName("SentenceLabel")
     main_window.sentence_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-    main_window.sentence_label.setWordWrap(True)
-    main_window.sentence_label.setStyleSheet("""
-        font-size: 20px;
-        font-family: 'Roboto';
-        font-weight: bold;
-        color: #1E293B;
-    """)
+    main_window.sentence_label.setWordWrap(False)
+    main_window.sentence_label.setStyleSheet("font-size: 17px; font-weight: bold; color: #1E293B;")
     main_window.sentence_label.setText("(sentence will appear here)")
     sentence_panel_layout.addWidget(main_window.sentence_label, 1)
 
-    # Backspace button — remove last word
     main_window.sentence_backspace_btn = QPushButton("⌫")
     main_window.sentence_backspace_btn.setObjectName("SentenceBackspaceBtn")
-    main_window.sentence_backspace_btn.setFixedSize(44, 44)
+    main_window.sentence_backspace_btn.setFixedSize(38, 38)
     main_window.sentence_backspace_btn.setToolTip("Remove last word")
     main_window.sentence_backspace_btn.setStyleSheet("""
         QPushButton#SentenceBackspaceBtn {
             background-color: #F1F5F9;
             color: #475569;
-            font-size: 18px;
+            font-size: 16px;
             border-radius: 6px;
             border: 1px solid #CBD5E1;
         }
@@ -587,10 +600,9 @@ def create_recognition_widget(main_window):
     """)
     sentence_panel_layout.addWidget(main_window.sentence_backspace_btn)
 
-    # Clear button — clear full sentence
     main_window.sentence_clear_btn = QPushButton("✕ Clear")
     main_window.sentence_clear_btn.setObjectName("SentenceClearBtn")
-    main_window.sentence_clear_btn.setFixedHeight(44)
+    main_window.sentence_clear_btn.setFixedHeight(38)
     main_window.sentence_clear_btn.setStyleSheet("""
         QPushButton#SentenceClearBtn {
             background-color: #FEE2E2;
@@ -599,53 +611,54 @@ def create_recognition_widget(main_window):
             font-weight: bold;
             border-radius: 6px;
             border: 1px solid #FECACA;
-            padding: 0 14px;
+            padding: 0 12px;
         }
         QPushButton#SentenceClearBtn:hover { background-color: #FECACA; }
     """)
     sentence_panel_layout.addWidget(main_window.sentence_clear_btn)
-
     layout.addWidget(sentence_panel)
 
-    # Control buttons
+    # ── Camera control buttons ───────────────────────────────────────────────
     control_layout = QHBoxLayout()
     control_layout.addStretch()
-    
+
     main_window.recognition_start_btn = QPushButton("Start Camera")
     main_window.recognition_start_btn.setObjectName("startRecognitionButton")
-    main_window.recognition_start_btn.setMinimumHeight(50)
-    main_window.recognition_start_btn.setMinimumWidth(200)
+    main_window.recognition_start_btn.setFixedHeight(40)
+    main_window.recognition_start_btn.setMinimumWidth(150)
     control_layout.addWidget(main_window.recognition_start_btn)
-    
+
     main_window.recognition_stop_btn = QPushButton("Stop Camera")
     main_window.recognition_stop_btn.setObjectName("stopRecognitionButton")
-    main_window.recognition_stop_btn.setMinimumHeight(50)
-    main_window.recognition_stop_btn.setMinimumWidth(200)
+    main_window.recognition_stop_btn.setFixedHeight(40)
+    main_window.recognition_stop_btn.setMinimumWidth(150)
     main_window.recognition_stop_btn.setEnabled(False)
     control_layout.addWidget(main_window.recognition_stop_btn)
-    
+
     control_layout.addStretch()
     layout.addLayout(control_layout)
 
-    # Status indicator
+    # ── Status row ───────────────────────────────────────────────────────────
     status_layout = QHBoxLayout()
-    
+    status_layout.setContentsMargins(0, 0, 0, 0)
+
     main_window.recognition_status_indicator = QLabel("●")
     main_window.recognition_status_indicator.setObjectName("statusIndicator")
-    main_window.recognition_status_indicator.setStyleSheet("color: #666; font-size: 20px;")
-    
+    main_window.recognition_status_indicator.setStyleSheet("color: #666; font-size: 14px;")
+
     main_window.recognition_status_text = QLabel("Camera stopped")
     main_window.recognition_status_text.setObjectName("statusText")
-    main_window.recognition_status_text.setStyleSheet("color: #666; font-size: 14px;")
-    
+    main_window.recognition_status_text.setStyleSheet("color: #666; font-size: 13px;")
+
     status_layout.addStretch()
     status_layout.addWidget(main_window.recognition_status_indicator)
     status_layout.addWidget(main_window.recognition_status_text)
     status_layout.addStretch()
-    
+
     layout.addLayout(status_layout)
-    
+
     return widget
+
 
 def create_manage_data_widget(main_window):
     """
