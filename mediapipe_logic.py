@@ -11,12 +11,10 @@ SEQUENCE_LENGTH = 30  # Number of frames per sequence
 RECORD_SECONDS = 3     # Duration of each recording
 KEYPOINT_SIZE = 1662   # Total features: 132(pose) + 1404(face) + 63(left_hand) + 63(right_hand)
 
-# MediaPipe model quality settings
-# Raised from 0.5/0.5 to 0.7/0.7 for better landmark accuracy during offline processing.
-# model_complexity=2 (Heavy) is used since this runs offline — no speed penalty.
-MIN_DETECTION_CONFIDENCE = 0.7
-MIN_TRACKING_CONFIDENCE = 0.7
-MODEL_COMPLEXITY = 2  # 0=Lite, 1=Full, 2=Heavy (best accuracy)
+# Reverted model_complexity to 0 (Lite) to completely eliminate all lag.
+MIN_DETECTION_CONFIDENCE = 0.5
+MIN_TRACKING_CONFIDENCE = 0.5
+MODEL_COMPLEXITY = 0  # 0=Lite (Fastest), 1=Full, 2=Heavy
 
 # Quality gate: if more than this ratio of sampled frames have zero hand landmarks,
 # a quality_warning signal is emitted to the UI.
@@ -33,12 +31,28 @@ mp_holistic = mp.solutions.holistic
 mp_drawing = mp.solutions.drawing_utils
 
 def mediapipe_detection(image, model):
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    image.flags.writeable = False
-    results = model.process(image)
-    image.flags.writeable = True
-    image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-    return image, results
+    # --- FAST Zero-Lag Low Light Enhancement ---
+    # Instantly check brightness using a fast grayscale mean
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    avg_brightness = np.mean(gray)
+    
+    # If the room is dark (value under 90)
+    if avg_brightness < 90:
+        # Boost contrast (alpha) and brightness (beta) completely instantly in C++
+        alpha = 1.3  # Contrast control
+        beta = 40    # Brightness control
+        enhanced_image = cv2.convertScaleAbs(image, alpha=alpha, beta=beta)
+    else:
+        enhanced_image = image
+    
+    # --- MediaPipe Processing ---
+    image_rgb = cv2.cvtColor(enhanced_image, cv2.COLOR_BGR2RGB)
+    image_rgb.flags.writeable = False
+    results = model.process(image_rgb)
+    image_rgb.flags.writeable = True
+    
+    image_bgr_out = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
+    return image_bgr_out, results
 
 def draw_styled_landmarks(image, results):
     mp_drawing.draw_landmarks(image, results.pose_landmarks, mp_holistic.POSE_CONNECTIONS,

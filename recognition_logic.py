@@ -24,6 +24,7 @@ class RecognitionWorker(QThread):
         super().__init__()
         self.cam_index = cam_index
         self.dataset_name = dataset_name
+        self.initial_dataset = dataset_name
         self.running = False
         self.model = None
         self.label_encoder = None
@@ -98,13 +99,24 @@ class RecognitionWorker(QThread):
             return False
     
     def mediapipe_detection(self, image, model):
-        """Process image with MediaPipe"""
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        image.flags.writeable = False
-        results = model.process(image)
-        image.flags.writeable = True
-        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-        return image, results
+        """Process image with Fast Zero-Lag Low Light Enhancement"""
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        avg_brightness = np.mean(gray)
+        
+        # If dark, boost instantly using mapped C++ function
+        if avg_brightness < 90:
+            enhanced_image = cv2.convertScaleAbs(image, alpha=1.3, beta=40)
+        else:
+            enhanced_image = image
+            
+        # --- MediaPipe Processing ---
+        image_rgb = cv2.cvtColor(enhanced_image, cv2.COLOR_BGR2RGB)
+        image_rgb.flags.writeable = False
+        results = model.process(image_rgb)
+        image_rgb.flags.writeable = True
+        
+        image_bgr_out = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
+        return image_bgr_out, results
     
     def draw_styled_landmarks(self, image, results):
         """Draw MediaPipe landmarks on image"""
@@ -208,7 +220,8 @@ class RecognitionWorker(QThread):
         # Stream raw frames while the model loads so UI shows live video
         with self.mp_holistic.Holistic(
             min_detection_confidence=0.5,
-            min_tracking_confidence=0.5
+            min_tracking_confidence=0.5,
+            model_complexity=0
         ) as holistic:
 
             # ── Preview loop (model still loading) ─────────────────────────
@@ -295,25 +308,22 @@ class RecognitionWorker(QThread):
                             self.sequence = []
                             no_hands_since = None
                             
-                            # Check if the committed word has a connected model
+                            # 1. If the sentence was cleanly terminated, return to the absolute baseline model
+                            if is_term and self.dataset_name != self.initial_dataset:
+                                self.model_stack.clear()
+                                self.status_update.emit(f"Returning to initial model: {self.initial_dataset}...")
+                                if self.load_model_and_encoder(self.initial_dataset):
+                                    self.status_update.emit(f"Recognition active ({self.initial_dataset})")
+                                continue
+                                
+                            # 2. Check if the committed word has a connected model to dive deeper
                             if hasattr(self, 'action_configs') and committed_word in self.action_configs:
                                 connected_model = self.action_configs[committed_word]
                                 self.status_update.emit(f"Switching to model: {connected_model}...")
-                                # Push current model to stack before switching
                                 self.model_stack.append(self.dataset_name)
-                                # Load new model and encoder
                                 if self.load_model_and_encoder(connected_model):
                                     self.status_update.emit(f"Recognition active ({connected_model})")
-                                continue # Skip the rest of this loop to start fresh
-                            
-                            # If no connected model, but we have a previous model in the stack
-                            elif getattr(self, 'model_stack', None):
-                                return_model = self.model_stack.pop()
-                                self.status_update.emit(f"Returning to previous model: {return_model}...")
-                                # Load previous model and encoder
-                                if self.load_model_and_encoder(return_model):
-                                    self.status_update.emit(f"Recognition active ({return_model})")
-                                continue # Skip the rest of this loop to start fresh
+                                continue
 
                             
                         elif no_hands_duration >= 1.0:

@@ -14,6 +14,7 @@ import win32gui
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QStackedWidget, QMessageBox, QSplitter, QLabel, QShortcut)
 from PyQt5.QtGui import QImage, QPixmap, QKeySequence
 from PyQt5.QtCore import QTimer, Qt, QThread, pyqtSignal, QPoint
+import google.generativeai as genai
 
 # --- Import from our local files ---
 from ui_definitions import (
@@ -41,6 +42,9 @@ STATE_SESSION_DONE = 7
 STATE_TRAINING = 8 # <-- NEW
 STATE_RECOGNITION = 9 # <-- NEW
 STATE_MANAGE_DATA = 10 # <-- NEW
+
+# --- Gemini API Configuration ---
+GEMINI_API_KEY = "AIzaSyDrL2lVjEMqPCHFF1Oh1GTCUPcjMk2OeOM"
 
 # --- NEW: Training Thread ---
 class TrainingThread(QThread):
@@ -121,6 +125,48 @@ class TrainingThread(QThread):
             self.process.terminate()
             self.process.wait()
             print("Training process terminated.")
+
+
+# --- NEW: Gemini Sentence Correction Thread ---
+class GeminiCorrectionThread(QThread):
+    """
+    Calls Gemini API to correct Marathi sentence grammar in the background
+    without blocking the UI thread.
+    """
+    correction_ready = pyqtSignal(str, str)  # (original_sentence, corrected_sentence)
+    correction_error = pyqtSignal(str)       # error message
+
+    def __init__(self, sentence, api_key):
+        super().__init__()
+        self.sentence = sentence
+        self.api_key = api_key
+
+    def run(self):
+        try:
+            # Configure Gemini API
+            genai.configure(api_key=self.api_key)
+            model = genai.GenerativeModel('gemini-2.5-flash')
+
+            # Create prompt for Marathi grammar correction
+            prompt = f"""You are a Marathi language expert. Please rephrase the following sequence of words to make it a complete, natural, and grammatically correct Marathi sentence. Add any necessary missing subjects, postpositions, or helping verbs. For example, if the input is "निळा रंग आवडतो", the output should be "मला निळा रंग आवडतो". Only return the corrected sentence, nothing else. Do not add explanations or comments.
+
+Sentence: {self.sentence}
+
+Corrected sentence:"""
+
+            # Call Gemini API
+            response = model.generate_content(prompt)
+            corrected_sentence = response.text.strip()
+
+            # Remove any trailing punctuation from the corrected sentence since we'll add it back
+            if corrected_sentence.endswith('.'):
+                corrected_sentence = corrected_sentence[:-1]
+
+            # Emit the result
+            self.correction_ready.emit(self.sentence, corrected_sentence)
+
+        except Exception as e:
+            self.correction_error.emit(f"Gemini API error: {str(e)}")
 
 
 class CollectionApp(QMainWindow):
@@ -235,7 +281,7 @@ class CollectionApp(QMainWindow):
         self.recognition_start_btn.clicked.connect(self.start_recognition)
         self.recognition_stop_btn.clicked.connect(self.stop_recognition)
         self.sentence_backspace_btn.clicked.connect(self.sentence_backspace)
-        self.sentence_clear_btn.clicked.connect(self.sentence_clear)
+        self.sentence_clear_btn.clicked.connect(self.clear_all_sentences)
         
         # Connect manage data signals
         self.manage_data_back_btn.clicked.connect(self.go_to_home)
@@ -533,6 +579,23 @@ class CollectionApp(QMainWindow):
         is_termination = action_name in termination_actions
         if hasattr(self, 'termination_input'):
             self.termination_input.setCurrentText("Yes" if is_termination else "No")
+            
+        # --- Auto-detect next video number dynamically ---
+        next_num = 0
+        existing_nums = []
+        for base_dir in ['ISL_Data', 'ISL_Processed']:
+            target_dir = os.path.join(base_dir, dataset_name, action_name)
+            if os.path.exists(target_dir):
+                for item in os.listdir(target_dir):
+                    name, _ = os.path.splitext(item)
+                    if name.isdigit():
+                        existing_nums.append(int(name))
+                        
+        if existing_nums:
+            next_num = max(existing_nums) + 1
+            
+        if hasattr(self, 'start_video_num_input'):
+            self.start_video_num_input.setValue(next_num)
 
     def filter_actions(self, text):
         for i in range(self.action_list.count()):
@@ -702,7 +765,7 @@ class CollectionApp(QMainWindow):
             self._sentence_words = []
         self._sentence_words.append(word)
         self._refresh_sentence_display()
-        
+
         if is_termination:
             current_sentence = self.sentence_label.text()
             if current_sentence and current_sentence != "(sentence will appear here)":
@@ -713,6 +776,9 @@ class CollectionApp(QMainWindow):
                 else:
                     self.completed_sentences_text.setText(completed_text)
                 
+                # Trigger Gemini correction only. Replace the final sequence.
+                self._start_gemini_correction_live(current_sentence, True)
+
                 # Clear the bottom sentence builder for the next sentence
                 self.sentence_clear()
 
@@ -743,6 +809,118 @@ class CollectionApp(QMainWindow):
         """Clear the entire sentence."""
         self._sentence_words = []
         self._refresh_sentence_display()
+
+    def clear_all_sentences(self):
+        """Clear both the active sentence and the completed sentences history block."""
+        self.sentence_clear()
+        if hasattr(self, 'completed_sentences_text'):
+            self.completed_sentences_text.clear()
+
+    def _start_gemini_correction_live(self, sentence, is_termination=False):
+        """Start Gemini API correction for the current sentence being built."""
+        if not hasattr(self, '_correction_threads'):
+            self._correction_threads = []
+
+        # Cancel any pending correction threads for live updates (to avoid conflicts)
+        if not is_termination and hasattr(self, '_live_correction_thread'):
+            if self._live_correction_thread and self._live_correction_thread.isRunning():
+                # Don't start a new correction if one is already running
+                return
+
+        # Create and start correction thread
+        correction_thread = GeminiCorrectionThread(sentence, GEMINI_API_KEY)
+
+        if is_termination:
+            # For termination, update the completed sentences panel
+            correction_thread.correction_ready.connect(self._on_correction_ready_completed)
+        else:
+            # For live updates, update the sentence label in real-time
+            correction_thread.correction_ready.connect(self._on_correction_ready_live)
+            self._live_correction_thread = correction_thread
+
+        correction_thread.correction_error.connect(self._on_correction_error)
+        correction_thread.finished.connect(lambda: self._cleanup_correction_thread(correction_thread))
+
+        self._correction_threads.append(correction_thread)
+        correction_thread.start()
+        print(f"Started Gemini correction for: {sentence}")
+
+    def _on_correction_ready_live(self, original_sentence, corrected_sentence):
+        """Handle when Gemini correction is ready for live sentence updates."""
+        print(f"Live Correction - Original: {original_sentence}")
+        print(f"Live Correction - Corrected: {corrected_sentence}")
+
+        # Update the live sentence display with corrected text
+        current_display = self.sentence_label.text()
+        if current_display == original_sentence:
+            self.sentence_label.setText(corrected_sentence)
+            print("✓ Live sentence corrected and updated in UI")
+
+    def _on_correction_ready_completed(self, original_sentence, corrected_sentence):
+        """Handle when Gemini correction is ready for completed sentences."""
+        print(f"Completed Correction - Original: {original_sentence}")
+        print(f"Completed Correction - Corrected: {corrected_sentence}")
+
+        # Get current text from completed sentences
+        current_text = self.completed_sentences_text.toPlainText()
+
+        # Replace the original sentence with the corrected one
+        # The original is stored with a period, so we search for "original."
+        original_with_period = original_sentence + "."
+        corrected_with_period = corrected_sentence + "."
+
+        if original_with_period in current_text:
+            updated_text = current_text.replace(original_with_period, corrected_with_period, 1)
+            self.completed_sentences_text.setText(updated_text)
+            print("✓ Completed sentence corrected and updated in UI")
+        else:
+            print("⚠ Original sentence not found in completed text")
+
+    def _start_gemini_correction(self, sentence):
+        """Start Gemini API correction for the given sentence."""
+        if not hasattr(self, '_correction_threads'):
+            self._correction_threads = []
+
+        # Create and start correction thread
+        correction_thread = GeminiCorrectionThread(sentence, GEMINI_API_KEY)
+        correction_thread.correction_ready.connect(self._on_correction_ready)
+        correction_thread.correction_error.connect(self._on_correction_error)
+        correction_thread.finished.connect(lambda: self._cleanup_correction_thread(correction_thread))
+
+        self._correction_threads.append(correction_thread)
+        correction_thread.start()
+        print(f"Started Gemini correction for: {sentence}")
+
+    def _on_correction_ready(self, original_sentence, corrected_sentence):
+        """Handle when Gemini correction is ready."""
+        print(f"Original: {original_sentence}")
+        print(f"Corrected: {corrected_sentence}")
+
+        # Get current text from completed sentences
+        current_text = self.completed_sentences_text.toPlainText()
+
+        # Replace the original sentence with the corrected one
+        # The original is stored with a period, so we search for "original."
+        original_with_period = original_sentence + "."
+        corrected_with_period = corrected_sentence + "."
+
+        if original_with_period in current_text:
+            updated_text = current_text.replace(original_with_period, corrected_with_period, 1)
+            self.completed_sentences_text.setText(updated_text)
+            print("✓ Sentence corrected and updated in UI")
+        else:
+            print("⚠ Original sentence not found in completed text")
+
+    def _on_correction_error(self, error_message):
+        """Handle Gemini correction errors."""
+        print(f"Gemini correction error: {error_message}")
+        # Optionally show a non-intrusive notification to the user
+        # For now, just log it
+
+    def _cleanup_correction_thread(self, thread):
+        """Clean up finished correction thread."""
+        if hasattr(self, '_correction_threads') and thread in self._correction_threads:
+            self._correction_threads.remove(thread)
 
     def update_recognition_frame(self, qt_image):
         """Update video frame display - scale to fit the label"""
@@ -906,19 +1084,9 @@ class CollectionApp(QMainWindow):
             json.dump(termination_actions, f, indent=4, ensure_ascii=False)
         # --- END NEW ---
         
-        user_start = self.start_video_num_input.value()
-        if user_start == 0:
-            # Auto-detect: find the next available number
-            self.start_num = 0
-            while True:
-                if not os.path.exists(os.path.join(self.action_landmark_dir, str(self.start_num))):
-                    break
-                self.start_num += 1
-            print(f"[Auto-detect] Starting video number: {self.start_num}")
-        else:
-            # Use user-defined start number
-            self.start_num = user_start
-            print(f"[Manual] Starting video number: {self.start_num}")
+        # Use the exact value from the UI, which automatically generates the correct sequence number
+        self.start_num = self.start_video_num_input.value()
+        print(f"Starting video number: {self.start_num}")
         self.current_video_num = self.start_num
         
         self.session_action_label.setText(f"Action: {self.action_name}")

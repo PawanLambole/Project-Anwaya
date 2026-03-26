@@ -245,7 +245,11 @@ class CollectionApp(QMainWindow):
         self.record_start_time = 0
 
         # --- MediaPipe/CV ---
-        self.holistic = mp_holistic.Holistic(min_detection_confidence=0.7, min_tracking_confidence=0.7)
+        self.holistic = mp_holistic.Holistic(
+            min_detection_confidence=0.5, 
+            min_tracking_confidence=0.5,
+            model_complexity=0
+        )
         self.cap = None
         self.video_writer = None
         self.camera_timer = QTimer()

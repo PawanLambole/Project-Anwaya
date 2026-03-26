@@ -546,7 +546,7 @@ def create_setup_widget(main_window):
     main_window.start_video_num_input.setValue(0)
     main_window.start_video_num_input.setFont(_ui_font(16))
     vid_right.addWidget(main_window.start_video_num_input)
-    vid_right.addWidget(QLabel("Set 0 to auto-detect next available", objectName="LabelHelper"))
+    vid_right.addWidget(QLabel("(Updates automatically on action select)", objectName="LabelHelper"))
     vid_layout.addLayout(vid_right)
     
     layout.addLayout(vid_layout)
