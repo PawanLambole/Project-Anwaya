@@ -44,3 +44,4 @@ training_summary.txt
 # Logs
 *.log
 .env
+api_key.txt

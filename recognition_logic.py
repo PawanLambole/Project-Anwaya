@@ -140,7 +140,16 @@ class RecognitionWorker(QThread):
             self.mp_drawing.DrawingSpec(color=(255, 255, 255), thickness=1, circle_radius=1),
             self.mp_drawing.DrawingSpec(color=(0, 0, 255), thickness=2, circle_radius=1)
         )
+        
+    def reset_prediction_state(self):
+        """Immediately clear the tracking state so the orange banner returns to 'Ready to recognize...' """
+        self._consec_word = None
+        self._consec_count = 0
+        self._candidate_word = None
+        self.sequence = []
+        self.prediction_ready.emit("Ready to recognize...", 0.0)
     
+
     def extract_keypoints(self, results):
         """Extract keypoints from MediaPipe results"""
         pose = np.array([[res.x, res.y, res.z, res.visibility] 

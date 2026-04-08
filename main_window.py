@@ -1,4 +1,5 @@
 import cv2
+
 import numpy as np
 import os
 import time
@@ -44,7 +45,10 @@ STATE_RECOGNITION = 9 # <-- NEW
 STATE_MANAGE_DATA = 10 # <-- NEW
 
 # --- Gemini API Configuration ---
-GEMINI_API_KEY = "AIzaSyDrL2lVjEMqPCHFF1Oh1GTCUPcjMk2OeOM"
+GEMINI_API_KEY = ""
+if os.path.exists("api_key.txt"):
+    with open("api_key.txt", "r", encoding="utf-8") as f:
+        GEMINI_API_KEY = f.read().strip()
 
 # --- NEW: Training Thread ---
 class TrainingThread(QThread):
@@ -148,11 +152,16 @@ class GeminiCorrectionThread(QThread):
             model = genai.GenerativeModel('gemini-2.5-flash')
 
             # Create prompt for Marathi grammar correction
-            prompt = f"""You are a Marathi language expert. Please rephrase the following sequence of words to make it a complete, natural, and grammatically correct Marathi sentence. Add any necessary missing subjects, postpositions, or helping verbs. For example, if the input is "निळा रंग आवडतो", the output should be "मला निळा रंग आवडतो". Only return the corrected sentence, nothing else. Do not add explanations or comments.
+            prompt = f"""You are an advanced Marathi language translator. Your task is to take translated sign language sequences and turn them into natural, grammatically correct Marathi sentences.
 
-Sentence: {self.sentence}
+RULES:
+1. If the input is a sequence of words that is grammatically incorrect or missing verbs/subjects (e.g., "निळा रंग आवडतो" or "मी जेवण"), you MUST rephrase it into a complete, natural Marathi sentence (e.g., "मला निळा रंग आवडतो" or "मी जेवण करत आहे").
+2. However, if the input is ALREADY a universally understood stand-alone greeting or short phrase (e.g., "शुभ प्रभात", "धन्यवाद", "नमस्कार", "माफ करा"), you MUST return it EXACTLY as it is without expanding it into a formal sentence. Do not say "तुमचा प्रभात शुभ असो" for "शुभ प्रभात".
+3. Return ONLY the final corrected Marathi text.
 
-Corrected sentence:"""
+Input: {self.sentence}
+
+Corrected Marathi text:"""
 
             # Call Gemini API
             response = model.generate_content(prompt)
@@ -281,7 +290,7 @@ class CollectionApp(QMainWindow):
         self.recognition_start_btn.clicked.connect(self.start_recognition)
         self.recognition_stop_btn.clicked.connect(self.stop_recognition)
         self.sentence_backspace_btn.clicked.connect(self.sentence_backspace)
-        self.sentence_clear_btn.clicked.connect(self.clear_all_sentences)
+        self.sentence_clear_btn.clicked.connect(self.sentence_clear)
         
         # Connect manage data signals
         self.manage_data_back_btn.clicked.connect(self.go_to_home)
@@ -804,11 +813,15 @@ class CollectionApp(QMainWindow):
         if hasattr(self, '_sentence_words') and self._sentence_words:
             self._sentence_words.pop()
             self._refresh_sentence_display()
+        if hasattr(self, 'recognition_worker') and self.recognition_worker:
+            self.recognition_worker.reset_prediction_state()
 
     def sentence_clear(self):
         """Clear the entire sentence."""
         self._sentence_words = []
         self._refresh_sentence_display()
+        if hasattr(self, 'recognition_worker') and self.recognition_worker:
+            self.recognition_worker.reset_prediction_state()
 
     def clear_all_sentences(self):
         """Clear both the active sentence and the completed sentences history block."""
@@ -1041,7 +1054,7 @@ class CollectionApp(QMainWindow):
         os.makedirs(os.path.dirname(config_path), exist_ok=True)
         action_configs = {}
         if os.path.exists(config_path):
-            with open(config_path, 'r') as f:
+            with open(config_path, 'r', encoding='utf-8') as f:
                 try:
                     action_configs = json.load(f)
                 except json.JSONDecodeError:
@@ -1056,8 +1069,8 @@ class CollectionApp(QMainWindow):
         else:
             action_configs.pop(self.action_name, None)
             
-        with open(config_path, 'w') as f:
-            json.dump(action_configs, f, indent=4)
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(action_configs, f, indent=4, ensure_ascii=False)
             
         # --- NEW: Save termination config ---
         term_config_path = os.path.join('model', dataset_name, 'termination_actions.json')
@@ -1352,6 +1365,12 @@ class CollectionApp(QMainWindow):
         key = event.key()
         if key == Qt.Key_F5:
             self.reload_stylesheets()
+            
+        if key == Qt.Key_Backspace:
+            self.sentence_backspace()
+            
+        if key == Qt.Key_Delete:
+            self.sentence_clear()
             
         if key == Qt.Key_Up:
             if self.rec_time_spin.isEnabled():
