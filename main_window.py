@@ -8,10 +8,22 @@ import json
 import subprocess # <-- NEW: For running external script
 import re # <-- NEW: For parsing training logs
 import ctypes
-from ctypes.wintypes import MSG
-import win32con
-import win32api
-import win32gui
+import platform
+
+# Windows-specific imports (conditional)
+if platform.system() == "Windows":
+    try:
+        from ctypes.wintypes import MSG
+        import win32con
+        import win32api
+        import win32gui
+        HAS_WIN32 = True
+    except ImportError:
+        print("Warning: Windows-specific modules (pywin32) not available. Some features may be limited.")
+        HAS_WIN32 = False
+else:
+    HAS_WIN32 = False
+
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QStackedWidget, QMessageBox, QSplitter, QLabel, QShortcut)
 from PyQt5.QtGui import QImage, QPixmap, QKeySequence
 from PyQt5.QtCore import QTimer, Qt, QThread, pyqtSignal, QPoint
@@ -48,9 +60,20 @@ STATE_BATCH_PROCESS = 11
 
 # --- Gemini API Configuration ---
 GEMINI_API_KEY = ""
-if os.path.exists("api_key.txt"):
-    with open("api_key.txt", "r", encoding="utf-8") as f:
-        GEMINI_API_KEY = f.read().strip()
+api_key_file = "api_key.txt"
+
+if os.path.exists(api_key_file):
+    try:
+        with open(api_key_file, "r", encoding="utf-8") as f:
+            GEMINI_API_KEY = f.read().strip()
+        if not GEMINI_API_KEY:
+            print("WARNING: api_key.txt exists but is empty. Gemini features will be disabled.")
+    except Exception as e:
+        print(f"ERROR reading API key from {api_key_file}: {e}")
+else:
+    print("NOTE: api_key.txt not found. Gemini grammar correction is disabled.")
+    print("      To enable it, create api_key.txt with your Google Generative AI API key")
+    print("      Get a free key at: https://aistudio.google.com/apikey")
 
 # --- NEW: Training Thread ---
 class TrainingThread(QThread):
@@ -148,6 +171,11 @@ class GeminiCorrectionThread(QThread):
         self.api_key = api_key
 
     def run(self):
+        # Check if API key is available
+        if not self.api_key:
+            self.correction_error.emit("Gemini API key not configured. Grammar correction disabled.")
+            return
+        
         try:
             # Configure Gemini API
             genai.configure(api_key=self.api_key)
@@ -177,7 +205,16 @@ Corrected Marathi text:"""
             self.correction_ready.emit(self.sentence, corrected_sentence)
 
         except Exception as e:
-            self.correction_error.emit(f"Gemini API error: {str(e)}")
+            error_msg = str(e)
+            if "API key not valid" in error_msg or "invalid_api_key" in error_msg:
+                self.correction_error.emit("Invalid API key. Please check api_key.txt")
+            elif "429" in error_msg or "rate_limit" in error_msg:
+                self.correction_error.emit("API rate limit exceeded. Using original sentence.")
+            elif "service unavailable" in error_msg.lower() or "500" in error_msg:
+                self.correction_error.emit("Gemini service unavailable. Using original sentence.")
+            else:
+                print(f"Gemini API error: {error_msg}")
+                self.correction_error.emit(f"Grammar correction failed: {error_msg}")
 
 
 class CollectionApp(QMainWindow):

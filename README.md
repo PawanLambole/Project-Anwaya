@@ -38,7 +38,25 @@ tensorflow==2.16.1
 scikit-learn==1.5.2
 matplotlib==3.9.2
 protobuf==4.25.3
+psutil==5.9.8
+google-generativeai==0.3.2
+pywin32
 ```
+
+## 🔑 Google Generative AI Setup (Optional but Recommended)
+
+For **Marathi grammar correction** feature, you'll need a Google Generative AI API key:
+
+1. Go to https://aistudio.google.com/apikey
+2. Click "Get API Key"
+3. Create a new API key in Google Cloud
+4. Create a file named `api_key.txt` in the project root
+5. Paste your API key in `api_key.txt`
+
+**Note:** 
+- The app works without this key, but grammar correction will be disabled
+- Free tier includes limited API calls per month
+- See `api_key_template.txt` for reference
 
 ## 🚀 Installation
 
@@ -151,6 +169,44 @@ B.Tech Final Year Project
 ## 📄 License
 
 This project is part of an academic final year project.
+
+## 🔧 Troubleshooting
+
+### Application won't start (silent exit with no error)
+
+1. **Verify your setup**:
+   ```bash
+   python verify_setup.py
+   ```
+   This will check all dependencies and configuration.
+
+2. **Run with debug output**:
+   - Windows: Use `run_app_debug.bat` instead of `start_app.bat`
+   - This will show any error messages that normally get hidden
+
+3. **Common issues**:
+   - **Missing dependencies**: Run `pip install -r requirements.txt`
+   - **Python version too old**: Requires Python 3.11+. Check with `python --version`
+   - **Virtual environment not activated**: Run `venv\Scripts\activate` (Windows) or `source venv/bin/activate` (Mac/Linux)
+   - **Missing pywin32**: On Windows, run `pip install pywin32` if you see import errors
+
+4. **If using a non-Windows system**:
+   - Some Windows-specific features are disabled automatically
+   - Use `python run_app.py` directly (not the .bat file)
+
+### Other issues
+
+- **Camera not working**: The app will auto-detect your webcam. Check Device Manager to ensure your camera is connected.
+- **GPU not detected**: The app will automatically fall back to CPU. GPU support requires CUDA/cuDNN installation.
+- **Out of memory**: Reduce the number of frames or video resolution in settings.
+
+### Grammar Correction Issues
+
+- **"Gemini API key not configured"**: Create `api_key.txt` with your API key from https://aistudio.google.com/apikey
+- **"Invalid API key"**: Check that your API key is correct and not expired. Go to https://console.cloud.google.com/ to verify.
+- **"Rate limit exceeded"**: You've exceeded the free tier limit. Wait a bit or upgrade your plan at https://console.cloud.google.com/
+- **"Grammar correction disabled"**: The app works fine without an API key. Sentences won't be auto-corrected, but recognition still works.
+- **Grammar correction not working**: The feature is optional. If API key is missing or invalid, the app will use the original recognized text.
 
 ## 🙏 Acknowledgments
 

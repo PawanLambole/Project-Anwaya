@@ -1,0 +1,23 @@
+# Google Generative AI API Key for Gemini Grammar Correction
+# 
+# To enable grammar correction for Marathi sentences, you need to:
+#
+# 1. Get a free API key from: https://aistudio.google.com/apikey
+# 2. Click "Get API Key" button
+# 3. Create a new API key in Google Cloud
+# 4. Copy the API key
+# 5. Paste it below (replace this entire line)
+#
+# Example:
+# AIzaSyB0lSNIP8WsT3iF0p2fnUuqtnL6Q8KZ8YQ
+#
+# NOTE: 
+# - Keep this key private and never share it
+# - Do not commit this file to version control
+# - Each user should have their own API key
+# - Free tier includes limited requests per month
+#
+# TROUBLESHOOTING:
+# - If you see "Invalid API key", check that you copied it correctly
+# - If you see "Rate limit exceeded", you've exceeded the free tier limit
+# - Check https://console.cloud.google.com/ to monitor your usage
