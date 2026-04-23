@@ -10,6 +10,7 @@ webcam.
 
 import cv2
 import re
+import sys
 
 # ---------- Keywords that identify virtual / software cameras ----------
 VIRTUAL_CAM_KEYWORDS = [
@@ -78,7 +79,8 @@ def enumerate_cameras(max_test: int = 8) -> list[dict]:
     test_range = len(device_names) if device_names else max_test
     
     for idx in range(test_range):
-        cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+        dshow = getattr(cv2, 'CAP_DSHOW', 0) if sys.platform == 'win32' else 0
+        cap = cv2.VideoCapture(idx, dshow) if dshow else cv2.VideoCapture(idx)
         if not cap.isOpened():
             cap = cv2.VideoCapture(idx)
         if not cap.isOpened():

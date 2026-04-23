@@ -9,4 +9,5 @@ matplotlib==3.9.2
 protobuf==4.25.3
 psutil==5.9.8
 google-generativeai==0.3.2
-pywin32
+pywin32; sys_platform == 'win32'
+pygrabber; sys_platform == 'win32'
