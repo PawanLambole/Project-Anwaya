@@ -157,6 +157,7 @@ class ProcessingThread(QThread):
         # Use Heavy model (model_complexity=2) for maximum accuracy during offline processing.
         # This is slower than the live camera model but produces far better keypoints.
         with mp_holistic.Holistic(
+            static_image_mode=True,
             min_detection_confidence=MIN_DETECTION_CONFIDENCE,
             min_tracking_confidence=MIN_TRACKING_CONFIDENCE,
             model_complexity=MODEL_COMPLEXITY
@@ -189,8 +190,21 @@ class ProcessingThread(QThread):
 
         num_frames = len(all_video_keypoints_raw)
         
-        # Sample frames evenly across the video to get exactly SEQUENCE_LENGTH frames
-        indices = np.linspace(0, num_frames - 1, SEQUENCE_LENGTH, dtype=int)
+        # --- Smart Cropping: Find active sign boundaries ---
+        valid_indices = [i for i, kp in enumerate(all_video_keypoints_raw) if not _frame_has_no_hands(kp)]
+        
+        first_valid_idx = 0
+        last_valid_idx = num_frames - 1
+        
+        if valid_indices:
+            first_valid_idx = valid_indices[0]
+            last_valid_idx = valid_indices[-1]
+            # Extra safety padding (add 1 frame of context on edges if possible)
+            first_valid_idx = max(0, first_valid_idx - 1)
+            last_valid_idx = min(num_frames - 1, last_valid_idx + 1)
+        
+        # Sample frames evenly across ONLY the active video portion (normalizes frame rate and drops dead space)
+        indices = np.linspace(first_valid_idx, last_valid_idx, SEQUENCE_LENGTH, dtype=int)
         
         # Save sampled keypoints and count bad frames (no hands detected)
         missed_hand_frames = 0

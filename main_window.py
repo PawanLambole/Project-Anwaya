@@ -22,7 +22,8 @@ from ui_definitions import (
     create_sidebar, create_home_widget, 
     create_setup_widget, create_collection_widget,
     create_training_widget, create_recognition_widget,
-    create_manage_data_widget, create_top_menubar
+    create_manage_data_widget, create_top_menubar,
+    create_batch_process_widget
 )
 from mediapipe_logic import (
     mediapipe_detection, draw_styled_landmarks, ProcessingThread,
@@ -40,9 +41,10 @@ STATE_PAUSE_COUNTDOWN = 4
 STATE_RECORDING = 5
 STATE_PROCESSING = 6
 STATE_SESSION_DONE = 7
-STATE_TRAINING = 8 # <-- NEW
-STATE_RECOGNITION = 9 # <-- NEW
-STATE_MANAGE_DATA = 10 # <-- NEW
+STATE_TRAINING = 8
+STATE_RECOGNITION = 9
+STATE_MANAGE_DATA = 10
+STATE_BATCH_PROCESS = 11
 
 # --- Gemini API Configuration ---
 GEMINI_API_KEY = ""
@@ -270,16 +272,18 @@ class CollectionApp(QMainWindow):
         self.home_widget = create_home_widget(self)
         self.setup_widget = create_setup_widget(self)
         self.collection_widget = create_collection_widget(self)
-        self.training_widget = create_training_widget(self) # <-- NEW
-        self.recognition_widget = create_recognition_widget(self) # <-- NEW
-        self.manage_data_widget = create_manage_data_widget(self) # <-- NEW
+        self.training_widget = create_training_widget(self)
+        self.recognition_widget = create_recognition_widget(self)
+        self.manage_data_widget = create_manage_data_widget(self)
+        self.batch_process_widget = create_batch_process_widget(self)
         
         self.stacked_widget.addWidget(self.home_widget)
         self.stacked_widget.addWidget(self.setup_widget)
         self.stacked_widget.addWidget(self.collection_widget)
-        self.stacked_widget.addWidget(self.training_widget) # <-- NEW
-        self.stacked_widget.addWidget(self.recognition_widget) # <-- NEW
-        self.stacked_widget.addWidget(self.manage_data_widget) # <-- NEW
+        self.stacked_widget.addWidget(self.training_widget)
+        self.stacked_widget.addWidget(self.recognition_widget)
+        self.stacked_widget.addWidget(self.manage_data_widget)
+        self.stacked_widget.addWidget(self.batch_process_widget)
 
         # Connect signals
         self.rec_time_spin.valueChanged.connect(self.update_record_time)
@@ -300,6 +304,13 @@ class CollectionApp(QMainWindow):
         self.export_data_btn.clicked.connect(self.export_data_info)
         self.refresh_actions_btn.clicked.connect(self.refresh_actions_data)
         self.restart_app_btn.clicked.connect(self.restart_application)
+
+        # Connect batch process signals
+        self.batch_back_btn.clicked.connect(self.go_to_home)
+        self.batch_scan_btn.clicked.connect(self.scan_batch_folders)
+        self.batch_start_btn.clicked.connect(self.start_batch_processing)
+        self.batch_add_btn.clicked.connect(self.batch_add_folders)
+        self.batch_remove_btn.clicked.connect(self.batch_remove_folders)
         
         # Connect setup screen dataset dropdown to action list refresh
         self.dataset_name_input.currentTextChanged.connect(self.on_setup_dataset_changed)
@@ -629,6 +640,148 @@ class CollectionApp(QMainWindow):
         self.stacked_widget.setCurrentWidget(self.recognition_widget)
         self.set_state(STATE_RECOGNITION)
     
+    def go_to_batch_process(self):
+        self.stacked_widget.setCurrentWidget(self.batch_process_widget)
+        self.set_state(STATE_BATCH_PROCESS)
+        # Populate dataset dropdown
+        datasets = []
+        if os.path.exists(DATA_PATH):
+            datasets = [d for d in os.listdir(DATA_PATH) if os.path.isdir(os.path.join(DATA_PATH, d))]
+            
+        datasets = sorted(datasets)
+        if not datasets:
+            datasets = ["Default"]
+        self.batch_dataset_input.clear()
+        self.batch_dataset_input.addItems(datasets)
+        self.batch_dataset_input.setCurrentText(self.active_dataset)
+        self.scan_batch_folders()
+        
+    def scan_batch_folders(self):
+        self.batch_folder_list.clear()
+        dataset_name = self.batch_dataset_input.currentText().strip()
+        if not dataset_name:
+            return
+            
+        data_path = os.path.join(DATA_PATH, dataset_name)
+        if not os.path.exists(data_path):
+            return
+            
+        # Add folders containing MP4 videos
+        for d in os.listdir(data_path):
+            folder_path = os.path.join(data_path, d)
+            if os.path.isdir(folder_path):
+                # Count videos (case-insensitive)
+                videos = [v for v in os.listdir(folder_path) if v.lower().endswith('.mp4')]
+                self.batch_folder_list.addItem(f"{d} ({len(videos)} videos)")
+                    
+    def batch_add_folders(self):
+        selected_items = self.batch_folder_list.selectedItems()
+        for item in selected_items:
+            # Prevent duplicates
+            is_dup = False
+            for i in range(self.batch_selected_list.count()):
+                if self.batch_selected_list.item(i).text() == item.text():
+                    is_dup = True
+                    break
+            if not is_dup:
+                self.batch_selected_list.addItem(item.text())
+            # Remove from left list if you only want it on one side at a time:
+            self.batch_folder_list.takeItem(self.batch_folder_list.row(item))
+
+    def batch_remove_folders(self):
+        selected_items = self.batch_selected_list.selectedItems()
+        for item in selected_items:
+            self.batch_folder_list.addItem(item.text())
+            self.batch_selected_list.takeItem(self.batch_selected_list.row(item))
+
+    def start_batch_processing(self):
+        if self.batch_selected_list.count() == 0:
+            QMessageBox.warning(self, "No Folders Selected", "Please select at least one folder to process.")
+            return
+            
+        dataset_name = self.batch_dataset_input.currentText().strip()
+        tasks = []
+        for i in range(self.batch_selected_list.count()):
+            item = self.batch_selected_list.item(i)
+            action_name = item.text().split(' (')[0]
+            action_dir = os.path.join(DATA_PATH, dataset_name, action_name)
+            videos = [v for v in os.listdir(action_dir) if v.lower().endswith('.mp4')]
+            for video in videos:
+                video_base = video.split('.')[0]
+                tasks.append({
+                    'video_path': os.path.join(action_dir, video),
+                    'output_folder': os.path.join(OUTPUT_PATH, dataset_name, action_name, video_base)
+                })
+                
+        if not tasks:
+            return
+            
+        self.batch_start_btn.setDisabled(True)
+        self.batch_scan_btn.setDisabled(True)
+        self.batch_overall_progress.setRange(0, len(tasks))
+        self.batch_overall_progress.setValue(0)
+        
+        # Clear old progress UI
+        while self.batch_progress_area.count():
+            item = self.batch_progress_area.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        self.batch_tasks = tasks
+        self.batch_completed = 0
+        self.active_threads = []
+        if not hasattr(self, 'finished_threads'):
+            self.finished_threads = []
+        self.finished_threads.clear() # clear previous run's finished threads safely
+        self.max_threads = self.batch_thread_spinner.value()
+        
+        self._spawn_next_batch_threads()
+        
+    def _spawn_next_batch_threads(self):
+        while len(self.active_threads) < self.max_threads and self.batch_tasks:
+            task = self.batch_tasks.pop(0)
+            os.makedirs(task['output_folder'], exist_ok=True)
+            
+            # Create thread
+            thread = ProcessingThread(task['video_path'], task['output_folder'], None)
+            thread.finished.connect(self._on_batch_thread_completed)
+            # Add a progress label
+            lbl = QLabel(f"Processing: {os.path.basename(task['video_path'])}...")
+            self.batch_progress_area.addWidget(lbl)
+            
+            # Store references
+            thread._lbl = lbl
+            self.active_threads.append(thread)
+            thread.start()
+            
+    def _on_batch_thread_completed(self, output_folder):
+        thread = self.sender()
+        if thread in self.active_threads:
+            self.active_threads.remove(thread)
+            
+            # Save reference to prevent GC from killing thread eagerly
+            if not hasattr(self, 'finished_threads'):
+                self.finished_threads = []
+            self.finished_threads.append(thread)
+            
+            if hasattr(thread, '_lbl'):
+                thread._lbl.setText(f"Completed: {os.path.basename(thread.video_path)}")
+                thread._lbl.setStyleSheet("color: #34A853;")
+            
+            # thread.deleteLater() # Removed: Let python GC handle cleanup when we clear finished_threads list
+            
+        self.batch_completed += 1
+        self.batch_overall_progress.setValue(self.batch_completed)
+        
+        if self.batch_tasks:
+            self._spawn_next_batch_threads()
+        elif not self.active_threads:
+            self.batch_start_btn.setDisabled(False)
+            self.batch_scan_btn.setDisabled(False)
+            QMessageBox.information(self, "Batch Complete", "All batch processing tasks have completed successfully!")
+            self.load_existing_actions()
+
     def go_to_manage_data(self):
         """Navigate to data management page"""
         self.stacked_widget.setCurrentWidget(self.manage_data_widget)

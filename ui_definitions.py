@@ -443,10 +443,14 @@ def create_home_widget(main_window):
     button_layout.addWidget(main_window.recognize_btn, 0, 1)
 
     main_window.manage_data_button = QPushButton("Manage Data")
-    main_window.manage_data_button.setObjectName("HomeBtnPurple") # Will change color definition separately
+    main_window.manage_data_button.setObjectName("HomeBtnPurple")
     main_window.manage_data_button.clicked.connect(main_window.go_to_manage_data)
-    # Move Manage Data to span both columns if Quit is removed? No, let's keep it 1,0.
-    button_layout.addWidget(main_window.manage_data_button, 1, 0, 1, 2) # Span 2 columns to keep it centered
+    button_layout.addWidget(main_window.manage_data_button, 1, 0)
+    
+    main_window.batch_processor_btn = QPushButton("Batch Processor")
+    main_window.batch_processor_btn.setObjectName("HomeBtnNavy")
+    main_window.batch_processor_btn.clicked.connect(main_window.go_to_batch_process)
+    button_layout.addWidget(main_window.batch_processor_btn, 1, 1)
     
     layout.addWidget(button_container)
     layout.addSpacerItem(QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding))
@@ -1029,4 +1033,167 @@ def create_training_widget(main_window):
     button_layout.addStretch()
     
     layout.addLayout(button_layout)
+    return widget
+
+def create_batch_process_widget(main_window):
+    """
+    Creates the Batch Data Processing Page UI
+    """
+    widget = QWidget()
+    widget.setObjectName("BatchProcessPage")
+    layout = QVBoxLayout(widget)
+    layout.setContentsMargins(40, 40, 40, 40)
+    layout.setSpacing(25)
+
+    # Header
+    header_layout = QHBoxLayout()
+    main_window.batch_back_btn = QPushButton("← Back to Home")
+    main_window.batch_back_btn.setObjectName("ButtonGray")
+    header_layout.addWidget(main_window.batch_back_btn)
+
+    header_title = QLabel("Parallel Batch Processor")
+    header_title.setObjectName("BatchHeaderTitle")
+    header_title.setStyleSheet("font-size: 26px; font-weight: bold; color: #EA580C;")
+    header_title.setAlignment(Qt.AlignCenter)
+    header_layout.addWidget(header_title, 1)
+
+    spacer_lbl = QLabel()
+    spacer_lbl.setFixedWidth(main_window.batch_back_btn.sizeHint().width())
+    header_layout.addWidget(spacer_lbl)
+    layout.addLayout(header_layout)
+
+    # Settings Row
+    settings_layout = QHBoxLayout()
+    
+    dataset_lbl = QLabel("Dataset:")
+    dataset_lbl.setStyleSheet("font-size: 16px; font-weight: bold;")
+    settings_layout.addWidget(dataset_lbl)
+    
+    main_window.batch_dataset_input = _make_combo(editable=True)
+    main_window.batch_dataset_input.setFont(_ui_font(14))
+    main_window.batch_dataset_input.setMinimumWidth(200)
+    settings_layout.addWidget(main_window.batch_dataset_input)
+    
+    main_window.batch_scan_btn = QPushButton("Scan ISL_Data Folders")
+    main_window.batch_scan_btn.setObjectName("ButtonBlue")
+    settings_layout.addWidget(main_window.batch_scan_btn)
+    settings_layout.addStretch()
+    
+    layout.addLayout(settings_layout)
+
+    # Actions Lists (Dual List Layout)
+    lists_layout = QHBoxLayout()
+    
+    # Left: Available
+    left_layout = QVBoxLayout()
+    list_lbl = QLabel("Available Action Folders:")
+    list_lbl.setStyleSheet("font-size: 16px; font-weight: bold;")
+    left_layout.addWidget(list_lbl)
+    
+    main_window.batch_folder_list = QListWidget()
+    main_window.batch_folder_list.setSelectionMode(QListWidget.MultiSelection)
+    main_window.batch_folder_list.setMinimumHeight(100)
+    main_window.batch_folder_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+    list_style = """
+        QListWidget {
+            background-color: #FFFFFF;
+            color: #1E293B;
+            border: 1px solid #CBD5E1;
+            border-radius: 6px;
+            font-size: 16px;
+        }
+        QListWidget::item { padding: 10px; border-bottom: 1px solid #F1F5F9; }
+        QListWidget::item:selected { background-color: #EA580C; color: white; }
+    """
+    main_window.batch_folder_list.setStyleSheet(list_style)
+    left_layout.addWidget(main_window.batch_folder_list, 1)
+    lists_layout.addLayout(left_layout, 5)
+    
+    # Middle: Buttons
+    btn_layout = QVBoxLayout()
+    btn_layout.addStretch()
+    main_window.batch_add_btn = QPushButton("Add >>")
+    main_window.batch_add_btn.setObjectName("ButtonBlue")
+    btn_layout.addWidget(main_window.batch_add_btn)
+    
+    main_window.batch_remove_btn = QPushButton("<< Remove")
+    main_window.batch_remove_btn.setObjectName("ButtonGray")
+    btn_layout.addWidget(main_window.batch_remove_btn)
+    btn_layout.addStretch()
+    lists_layout.addLayout(btn_layout, 1)
+    
+    # Right: Selected
+    right_layout = QVBoxLayout()
+    sel_lbl = QLabel("Selected for Processing:")
+    sel_lbl.setStyleSheet("font-size: 16px; font-weight: bold;")
+    right_layout.addWidget(sel_lbl)
+    
+    main_window.batch_selected_list = QListWidget()
+    main_window.batch_selected_list.setSelectionMode(QListWidget.MultiSelection)
+    main_window.batch_selected_list.setMinimumHeight(100)
+    main_window.batch_selected_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+    main_window.batch_selected_list.setStyleSheet(list_style)
+    right_layout.addWidget(main_window.batch_selected_list, 1)
+    lists_layout.addLayout(right_layout, 5)
+    
+    layout.addLayout(lists_layout, 3) # Big stretch factor so the lists take most of the screen
+
+    # Progress Tracking Area
+    prog_lbl = QLabel("Task Details (Live):")
+    prog_lbl.setStyleSheet("font-size: 16px; font-weight: bold;")
+    layout.addWidget(prog_lbl)
+    
+    main_window.batch_progress_area_widget = QWidget()
+    main_window.batch_progress_area = QVBoxLayout(main_window.batch_progress_area_widget)
+    main_window.batch_progress_area.setContentsMargins(10, 10, 10, 10)
+    
+    placeholder = QLabel("Task progress will appear here...")
+    placeholder.setStyleSheet("color: #64748B; font-style: italic;")
+    main_window.batch_progress_area.addWidget(placeholder)
+    main_window.batch_progress_area.addStretch()
+    
+    # We will use a QScrollArea in case there are many concurrent bars
+    progress_scroll = QScrollArea()
+    progress_scroll.setWidgetResizable(True)
+    progress_scroll.setWidget(main_window.batch_progress_area_widget)
+    progress_scroll.setMinimumHeight(60)
+    progress_scroll.setMaximumHeight(200) # prevent it from growing out of control
+    layout.addWidget(progress_scroll, 1)
+
+    # Overall Progress
+    overall_progress_layout = QVBoxLayout()
+    main_window.batch_overall_lbl = QLabel("Overall Progress:")
+    main_window.batch_overall_lbl.setStyleSheet("font-weight: bold;")
+    overall_progress_layout.addWidget(main_window.batch_overall_lbl)
+    
+    main_window.batch_overall_progress = QProgressBar()
+    main_window.batch_overall_progress.setFixedHeight(20)
+    main_window.batch_overall_progress.setTextVisible(True)
+    overall_progress_layout.addWidget(main_window.batch_overall_progress)
+    layout.addLayout(overall_progress_layout)
+
+    # Start Button Layout
+    bottom_layout = QHBoxLayout()
+    
+    threads_lbl = QLabel("Concurrent Threads:")
+    threads_lbl.setStyleSheet("font-size: 14px; font-weight: bold;")
+    bottom_layout.addWidget(threads_lbl)
+    
+    from PyQt5.QtWidgets import QSpinBox
+    main_window.batch_thread_spinner = QSpinBox()
+    main_window.batch_thread_spinner.setRange(1, 16)
+    main_window.batch_thread_spinner.setValue(4)
+    main_window.batch_thread_spinner.setFont(_ui_font(14))
+    bottom_layout.addWidget(main_window.batch_thread_spinner)
+    
+    bottom_layout.addStretch()
+    
+    main_window.batch_start_btn = QPushButton("Start Parallel Processing")
+    main_window.batch_start_btn.setObjectName("ButtonPurple")
+    main_window.batch_start_btn.setMinimumHeight(50)
+    main_window.batch_start_btn.setFont(_ui_font(16, QFont.Bold))
+    bottom_layout.addWidget(main_window.batch_start_btn)
+    
+    layout.addLayout(bottom_layout)
+
     return widget
